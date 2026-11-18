@@ -96,7 +96,7 @@ final class DefaultManagedTaskGroup implements ManagedTaskGroup
 
         if ($failures !== []) {
             /** @var non-empty-list<FailureDiagnostic> $failures */
-            throw new ManagedTaskGroupFailed($failures);
+            throw new ManagedTaskGroupFailed($failures, $this->diagnostics);
         }
     }
 

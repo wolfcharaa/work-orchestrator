@@ -26,14 +26,18 @@ use Fedor\WorkOrchestrator\Event\RetryScheduled;
 use Fedor\WorkOrchestrator\Event\TaskFailed;
 use Fedor\WorkOrchestrator\Event\TaskStarted;
 use Fedor\WorkOrchestrator\Event\TaskSucceeded;
+use Fedor\WorkOrchestrator\Exception\ManagedTaskFailed;
+use Fedor\WorkOrchestrator\Exception\ManagedTaskGroupFailed;
 use Fedor\WorkOrchestrator\Exception\WorkerCleanupFailed;
 use Fedor\WorkOrchestrator\FailCurrent;
 use Fedor\WorkOrchestrator\ProcessEvents;
 use Fedor\WorkOrchestrator\Result\FailureDiagnostic;
+use Fedor\WorkOrchestrator\Result\FailureKind;
 use Fedor\WorkOrchestrator\Result\FailureOrigin;
 use Fedor\WorkOrchestrator\Result\TaskOutcome;
 use Fedor\WorkOrchestrator\RetryCurrent;
 use Fedor\WorkOrchestrator\WorkEnvelope;
+use Fedor\WorkOrchestrator\WorkId;
 use LogicException;
 use Throwable;
 
@@ -166,27 +170,40 @@ final class WorkerRuntime
                     );
                 } catch (Throwable $failure) {
                     self::emitFailure($failure, $attempt);
+                    $evidence = self::failureEvidence($failure, $context, $attempt);
                     if (!$strategy instanceof HandlesTaskFailure) {
                         return new PrimaryTaskResult(
-                            TaskOutcome::failed(self::diagnostic($failure, $context, $attempt), $diagnostics),
+                            TaskOutcome::failed(
+                                $evidence->terminal,
+                                [...$diagnostics, ...$evidence->history()],
+                            ),
                             true,
                         );
                     }
 
-                    $diagnostic = self::diagnostic($failure, $context, $attempt);
                     try {
                         $action = $strategy->onFailure($work, $failure, $attempt, $cancellation);
                     } catch (Throwable $policyFailure) {
+                        $policyEvidence = self::failureEvidence(
+                            $policyFailure,
+                            $context,
+                            $attempt,
+                        );
+
                         return new PrimaryTaskResult(
                             TaskOutcome::failed(
-                                self::diagnostic($policyFailure, $context, $attempt),
-                                [...$diagnostics, $diagnostic],
+                                $policyEvidence->terminal,
+                                [
+                                    ...$diagnostics,
+                                    ...$evidence->recoveredHistory(),
+                                    ...$policyEvidence->history(),
+                                ],
                             ),
                             true,
                         );
                     }
                     if ($action instanceof CompleteAs) {
-                        $diagnostics[] = $diagnostic;
+                        $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
                         IpcPayloadGuard::assertWithin($action->value, $configuration->maxIpcPayloadBytes);
                         ProcessEvents::emitCore(new TaskSucceeded(ExecutorType::Primary, $attempt));
 
@@ -196,7 +213,7 @@ final class WorkerRuntime
                         );
                     }
                     if ($action instanceof RetryCurrent && $attempt < $maxAttempts) {
-                        $diagnostics[] = $diagnostic;
+                        $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
                         ProcessEvents::emitCore(new RetryScheduled(
                             ExecutorType::Primary,
                             $attempt + 1,
@@ -218,7 +235,10 @@ final class WorkerRuntime
                     }
 
                     return new PrimaryTaskResult(
-                        TaskOutcome::failed(self::diagnostic($failure, $context, $attempt), $diagnostics),
+                        TaskOutcome::failed(
+                            $evidence->terminal,
+                            [...$diagnostics, ...$evidence->history()],
+                        ),
                         $abort,
                     );
                 }
@@ -340,6 +360,140 @@ final class WorkerRuntime
             $failure,
             FailureOrigin::task($context, ExecutorType::Primary, $attempt),
         );
+    }
+
+    private static function failureEvidence(
+        Throwable $failure,
+        EventContext $context,
+        int $attempt,
+    ): FailureEvidence {
+        if ($failure instanceof ManagedTaskFailed) {
+            return self::distinctEvidence(new FailureEvidence(
+                $failure->diagnostic,
+                $failure->diagnostics,
+            ));
+        }
+
+        if ($failure instanceof ManagedTaskGroupFailed) {
+            return self::distinctEvidence(new FailureEvidence(
+                $failure->failures[0],
+                $failure->diagnostics,
+                \array_slice($failure->failures, 1),
+            ));
+        }
+
+        if ($failure instanceof WorkerCleanupFailed) {
+            if ($failure->primaryFailure !== null) {
+                $primary = self::failureEvidence($failure->primaryFailure, $context, $attempt);
+                $after = $primary->after;
+                foreach ($failure->cleanupFailures as $cleanupFailure) {
+                    $after = [
+                        ...$after,
+                        ...self::cleanupDiagnostics($cleanupFailure, $context, $attempt),
+                    ];
+                }
+
+                return self::distinctEvidence(new FailureEvidence(
+                    $primary->terminal,
+                    $primary->before,
+                    $after,
+                ));
+            }
+
+            $after = [];
+            foreach ($failure->cleanupFailures as $cleanupFailure) {
+                $after = [
+                    ...$after,
+                    ...self::cleanupDiagnostics($cleanupFailure, $context, $attempt),
+                ];
+            }
+
+            return self::distinctEvidence(new FailureEvidence(
+                self::diagnostic($failure, $context, $attempt),
+                after: $after,
+            ));
+        }
+
+        return new FailureEvidence(self::diagnostic($failure, $context, $attempt));
+    }
+
+    /** @return list<FailureDiagnostic> */
+    private static function cleanupDiagnostics(
+        Throwable $failure,
+        EventContext $context,
+        int $attempt,
+    ): array {
+        if ($failure instanceof ManagedTaskFailed || $failure instanceof ManagedTaskGroupFailed) {
+            return self::failureEvidence($failure, $context, $attempt)->recoveredHistory();
+        }
+
+        if ($failure instanceof WorkerCleanupFailed) {
+            return self::failureEvidence($failure, $context, $attempt)->recoveredHistory();
+        }
+
+        return [FailureDiagnostic::from(
+            $failure,
+            FailureOrigin::task($context, ExecutorType::Primary, $attempt),
+            FailureKind::Cleanup,
+        )];
+    }
+
+    private static function distinctEvidence(FailureEvidence $evidence): FailureEvidence
+    {
+        $seen = [$evidence->terminal];
+        $before = self::distinctDiagnostics($evidence->before, $seen);
+        $after = self::distinctDiagnostics($evidence->after, $seen);
+
+        return new FailureEvidence($evidence->terminal, $before, $after);
+    }
+
+    /**
+     * @param list<FailureDiagnostic> $diagnostics
+     * @param list<FailureDiagnostic> $seen
+     * @return list<FailureDiagnostic>
+     */
+    private static function distinctDiagnostics(array $diagnostics, array &$seen): array
+    {
+        $distinct = [];
+        foreach ($diagnostics as $diagnostic) {
+            foreach ($seen as $existing) {
+                if (self::sameDiagnostic($diagnostic, $existing)) {
+                    continue 2;
+                }
+            }
+
+            $seen[] = $diagnostic;
+            $distinct[] = $diagnostic;
+        }
+
+        return $distinct;
+    }
+
+    private static function sameDiagnostic(
+        FailureDiagnostic $first,
+        FailureDiagnostic $second,
+    ): bool {
+        return $first === $second || (
+            $first->kind === $second->kind
+            && $first->type === $second->type
+            && $first->message === $second->message
+            && $first->occurredAt === $second->occurredAt
+            && $first->origin->role === $second->origin->role
+            && $first->origin->executor === $second->origin->executor
+            && $first->origin->processId === $second->origin->processId
+            && self::sameWorkId($first->origin->workId, $second->origin->workId)
+            && $first->origin->taskId === $second->origin->taskId
+            && $first->origin->attempt === $second->origin->attempt
+        );
+    }
+
+    private static function sameWorkId(?WorkId $first, ?WorkId $second): bool
+    {
+        if ($first === null || $second === null) {
+            return $first === $second;
+        }
+
+        return $first->equals($second);
     }
 
     private function __construct() {}

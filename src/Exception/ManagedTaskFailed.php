@@ -9,8 +9,11 @@ use RuntimeException;
 
 final class ManagedTaskFailed extends RuntimeException
 {
-    public function __construct(public readonly FailureDiagnostic $diagnostic)
-    {
+    /** @param list<FailureDiagnostic> $diagnostics */
+    public function __construct(
+        public readonly FailureDiagnostic $diagnostic,
+        public readonly array $diagnostics = [],
+    ) {
         parent::__construct(\sprintf(
             'Managed task failed with %s: %s',
             $diagnostic->type,

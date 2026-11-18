@@ -28,7 +28,7 @@ final readonly class TaskHandle
     {
         $outcome = $this->outcome($cancellation);
         if ($outcome->failure !== null) {
-            throw new ManagedTaskFailed($outcome->failure);
+            throw new ManagedTaskFailed($outcome->failure, $outcome->diagnostics);
         }
 
         return $outcome->value;

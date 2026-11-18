@@ -64,7 +64,7 @@ final class WorkerGroupCleanup
             }
 
             if ($worker->isRunning()) {
-                $shutdowns[$index] = async($worker->shutdown(...));
+                $shutdowns[$index] = BoundedWorkerShutdown::start($worker, $graceSeconds);
             }
         }
 

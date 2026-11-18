@@ -9,9 +9,14 @@ use RuntimeException;
 
 final class ManagedTaskGroupFailed extends RuntimeException
 {
-    /** @param non-empty-list<FailureDiagnostic> $failures */
-    public function __construct(public readonly array $failures)
-    {
+    /**
+     * @param non-empty-list<FailureDiagnostic> $failures
+     * @param list<FailureDiagnostic>           $diagnostics
+     */
+    public function __construct(
+        public readonly array $failures,
+        public readonly array $diagnostics = [],
+    ) {
         parent::__construct(\sprintf(
             'Managed task group completed with %d failure(s).',
             \count($this->failures),

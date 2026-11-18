@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Fedor\WorkOrchestrator\Tests;
 
+use Fedor\WorkOrchestrator\Event\ExecutorType;
 use Fedor\WorkOrchestrator\ExecutionMode;
 use Fedor\WorkOrchestrator\File\FileWorkQueue;
 use Fedor\WorkOrchestrator\Orchestrator;
+use Fedor\WorkOrchestrator\Result\FailureKind;
 use Fedor\WorkOrchestrator\RunStatus;
+use Fedor\WorkOrchestrator\Tests\Fixture\AbortChildCrashStrategy;
 use Fedor\WorkOrchestrator\Tests\Fixture\ConcurrentTasksStrategy;
 use Fedor\WorkOrchestrator\Tests\Fixture\ContainerTasksStrategy;
 use Fedor\WorkOrchestrator\Tests\Fixture\CrashChildStrategy;
@@ -112,6 +115,40 @@ final class ManagedTaskExecutionTest
         Assert::same($result->status, RunStatus::Succeeded);
         Assert::same($result->value(new WorkId($input)), 42);
         Assert::count($result->diagnostics(), 1);
+    }
+
+    public function testAnUnrecoverableManagedChildCrashRemainsTheTerminalCause(): void
+    {
+        $input = self::temporaryFile();
+        $marker = $input . '.child-crashed';
+
+        try {
+            $result = Orchestrator::fromQueue(FileWorkQueue::discover([$input]))
+                ->childWorkersPerPrimary(1)
+                ->run(new AbortChildCrashStrategy($marker));
+        } finally {
+            \unlink($input);
+            if (\is_file($marker)) {
+                \unlink($marker);
+            }
+        }
+
+        $work = $result->result(new WorkId($input));
+        Assert::same($result->status, RunStatus::Failed);
+        Assert::true($work !== null);
+        $failure = $work->outcome->failure
+            ?? throw new LogicException('Expected a terminal managed child crash diagnostic.');
+        Assert::same($failure->kind, FailureKind::WorkerCrash);
+        Assert::same($failure->origin->executor, ExecutorType::Parallel);
+        Assert::count($work->outcome->diagnostics, 0);
+        $diagnostics = $result->diagnostics();
+        Assert::count($diagnostics, 2);
+        $crash = $diagnostics[0]
+            ?? throw new LogicException('Expected the managed child crash diagnostic.');
+        $cleanup = $diagnostics[1]
+            ?? throw new LogicException('Expected the managed child cleanup diagnostic.');
+        Assert::same($crash->kind, FailureKind::WorkerCrash);
+        Assert::same($cleanup->kind, FailureKind::Cleanup);
     }
 
     private static function temporaryFile(): string
