@@ -1,0 +1,22 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    - vendor/phpstan/phpstan/conf/bleedingEdge.neon
+
+parameters:
+    level: max
+    phpVersion: 80400
+    paths:
+        - benchmarks
+        - examples
+        - src
+        - tests
+        - testo.php
+    checkBenevolentUnionTypes: true
+    checkMissingCallableSignature: true
+    checkUninitializedProperties: true
+    rememberPossiblyImpureFunctionValues: false
+    reportIgnoresWithoutComments: true
+    reportPossiblyNonexistentConstantArrayOffset: true
+    reportPossiblyNonexistentGeneralArrayOffset: true
+    reportUnsafeArrayStringKeyCasting: detect
+    tmpDir: /tmp/fedor-work-orchestrator-phpstan

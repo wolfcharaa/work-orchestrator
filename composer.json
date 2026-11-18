@@ -1,0 +1,53 @@
+{
+    "name": "fedor/work-orchestrator",
+    "description": "Finite concurrent and parallel work orchestration with managed subprocess lifecycles",
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": "^8.4.1",
+        "amphp/amp": "^3.1",
+        "amphp/parallel": "^2.4",
+        "psr/container": "^2.0",
+        "symfony/finder": "^8.1"
+    },
+    "require-dev": {
+        "amphp/file": "^4.0",
+        "friendsofphp/php-cs-fixer": "^3.89",
+        "phpstan/phpstan": "^2.3",
+        "phpstan/phpstan-strict-rules": "^2.1",
+        "testo/testo": "^0.10"
+    },
+    "autoload": {
+        "psr-4": {
+            "Fedor\\WorkOrchestrator\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Fedor\\WorkOrchestrator\\Example\\": "examples/",
+            "Fedor\\WorkOrchestrator\\Benchmark\\": "benchmarks/",
+            "Fedor\\WorkOrchestrator\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "benchmark:generate-record-fixture": "@php -d memory_limit=-1 benchmarks/generate-record-fixture.php",
+        "benchmark:record-pipeline": "@php -d memory_limit=-1 benchmarks/record-pipeline.php",
+        "benchmark:worker-files": "@php -d memory_limit=-1 benchmarks/worker-files.php",
+        "example:record-import": "@php -d memory_limit=-1 examples/record-import.php",
+        "check": [
+            "@cs-check",
+            "@phpstan",
+            "@test"
+        ],
+        "cs-check": "php-cs-fixer fix --diff --dry-run --sequential --using-cache=no",
+        "cs-fix": "php-cs-fixer fix --diff --sequential --using-cache=no",
+        "phpstan": "phpstan analyse --memory-limit=-1",
+        "test": "testo --suite=Unit"
+    },
+    "config": {
+        "platform": {
+            "php": "8.4.1"
+        },
+        "sort-packages": true
+    }
+}
