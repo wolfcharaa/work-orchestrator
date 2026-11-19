@@ -21,6 +21,7 @@
     "require-dev": {
         "amphp/file": "^4.0",
         "friendsofphp/php-cs-fixer": "^3.89",
+        "llm/skills": "^1.20",
         "phpstan/phpstan": "^2.3",
         "phpstan/phpstan-strict-rules": "^2.1",
         "testo/testo": "^0.10"
@@ -41,6 +42,10 @@
         "benchmark:generate-record-fixture": "@php -d memory_limit=-1 benchmarks/generate-record-fixture.php",
         "benchmark:record-pipeline": "@php -d memory_limit=-1 benchmarks/record-pipeline.php",
         "benchmark:worker-files": "@php -d memory_limit=-1 benchmarks/worker-files.php",
+        "example:basic": "@php examples/basic.php",
+        "example:custom-queue": "@php examples/custom-queue.php",
+        "example:managed-tasks": "@php examples/managed-tasks.php",
+        "example:observability": "@php examples/observability.php",
         "example:record-import": "@php -d memory_limit=-1 examples/record-import.php",
         "check": [
             "@cs-check",
@@ -53,10 +58,18 @@
         "test": "testo --suite=Unit"
     },
     "config": {
+        "allow-plugins": {
+            "llm/skills": true
+        },
         "platform": {
             "php": "8.4.1"
         },
         "sort-packages": true
+    },
+    "extra": {
+        "skills": {
+            "source": "resources/skills"
+        }
     },
     "support": {
         "issues": "https://github.com/wolfcharaa/work-orchestrator/issues",

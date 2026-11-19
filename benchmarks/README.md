@@ -148,8 +148,9 @@ structural ownership, но не универсальное обещание ус
 
 ## q99b: native и ext-uv после path-first refactor
 
-`amphp/file 4.0.0` возвращён только в `require-dev`, а `ext-uv` — в Composer
-`suggest`. Benchmark factory создаётся внутри worker: сначала применяется
+`amphp/file 4.0.0` возвращён только в `require-dev`, а `ext-uv` был установлен
+отдельно в benchmark environment и не объявлен package requirement/suggestion.
+Benchmark factory создаётся внутри worker: сначала применяется
 `WORK_ORCHESTRATOR_BENCHMARK_FILE_DRIVER`, затем `auto` выбирает
 `uv → eio → native`. В публичном API библиотеки нового reader/Strategy нет.
 

@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "e9003428f9e80a2af5dc432f80013174",
+    "content-hash": "ebe2e038ef863c65976bdc49595567df",
     "packages": [
         {
             "name": "amphp/amp",
@@ -2262,6 +2262,85 @@
                 }
             ],
             "time": "2026-09-08T10:51:37+00:00"
+        },
+        {
+            "name": "llm/skills",
+            "version": "1.20.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/roxblnfk/skills.git",
+                "reference": "9b66d818485da7109f9d0ce8f11228e1c789055b"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/roxblnfk/skills/zipball/9b66d818485da7109f9d0ce8f11228e1c789055b",
+                "reference": "9b66d818485da7109f9d0ce8f11228e1c789055b",
+                "shasum": ""
+            },
+            "require": {
+                "composer-plugin-api": "^2.0",
+                "internal/path": "^1.4",
+                "php": ">=8.2"
+            },
+            "require-dev": {
+                "bamarni/composer-bin-plugin": "^1.8",
+                "buggregator/trap": "^1.16",
+                "composer/composer": "^2.10.3",
+                "roxblnfk/unpoly": "^1.8",
+                "testo/bridge-infection": "0.1 - 1",
+                "testo/testo": "0.10 - 1"
+            },
+            "suggest": {
+                "ext-intl": "Detects skill names that differ only in Unicode composition; without it or its Symfony polyfill non-ASCII skill names are skipped",
+                "ext-mbstring": "Detects skill names that differ only in non-ASCII letter case; without it non-ASCII skill names are skipped"
+            },
+            "type": "composer-plugin",
+            "extra": {
+                "class": "LLM\\Skills\\Composer\\SkillsPlugin",
+                "bamarni-bin": {
+                    "bin-links": true,
+                    "forward-command": false,
+                    "target-directory": "tools"
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "LLM\\Skills\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "BSD-3-Clause"
+            ],
+            "authors": [
+                {
+                    "name": "Aleksei Gagarin",
+                    "email": "roxblnfk@gmail.com"
+                }
+            ],
+            "description": "AI skills discovery and management system for LLM agents",
+            "keywords": [
+                "agents",
+                "ai",
+                "ai-agents",
+                "ai-skills",
+                "claude-code",
+                "dev",
+                "llm",
+                "llm-agents",
+                "skills"
+            ],
+            "support": {
+                "issues": "https://github.com/roxblnfk/skills/issues",
+                "source": "https://github.com/roxblnfk/skills"
+            },
+            "funding": [
+                {
+                    "url": "https://boosty.to/roxblnfk",
+                    "type": "boosty"
+                }
+            ],
+            "time": "2026-11-18T19:02:58+00:00"
         },
         {
             "name": "phpstan/phpstan",

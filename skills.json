@@ -1,0 +1,13 @@
+{
+    "$schema": "https://raw.githubusercontent.com/roxblnfk/skills/master/resources/skills.schema.json",
+    "target": ".agents/skills",
+    "discovery": true,
+    "auto-sync": true,
+    "clean": false,
+    "sources": [
+        {
+            "from": "dir",
+            "path": "resources/skills"
+        }
+    ]
+}

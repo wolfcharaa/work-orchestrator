@@ -149,8 +149,9 @@ ownership, not a universal speedup claim for every format.
 
 ## q99b: native versus ext-uv after the path-first refactor
 
-`amphp/file 4.0.0` is restored only in `require-dev`, while `ext-uv` is restored
-to Composer `suggest`. The benchmark factory is created inside a worker: it
+`amphp/file 4.0.0` is restored only in `require-dev`, while `ext-uv` was
+installed separately in the benchmark environment and is not declared as a
+package requirement or suggestion. The benchmark factory is created inside a worker: it
 first applies `WORK_ORCHESTRATOR_BENCHMARK_FILE_DRIVER`, then `auto` selects
 `uv → eio → native`. No new reader or Strategy is exposed by the library's
 public API.

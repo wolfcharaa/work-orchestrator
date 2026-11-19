@@ -2,225 +2,118 @@
 
 [Русский](README.md)
 
-`fedor/work-orchestrator` distributes finite application-owned work across OS
-processes and manages their lifecycle. The library owns admission, root / primary
-/ child limits, cancellation, events, diagnostics, and cleanup. Useful work
-stays in the application `Strategy`.
+`fedor/work-orchestrator` runs a finite set of application tasks across multiple
+OS processes and returns one run result. The library controls task admission,
+parallelism limits, cancellation, events, and worker shutdown. The application
+still owns task meaning, database and file access, transactions, idempotency,
+and durable state.
 
-Files are a ready-made adapter, not a core constraint. A payload may be a
-command, DTO, durable range locator, or `FileEntry`.
+Use it when the work set can be formed before a run and must be distributed
+across a bounded number of processes. It is not a message broker, a background
+job scheduler, or checkpoint/resume after the whole application stops.
 
-## Installation
+## Minimal model
+
+- the **root process** is the original application process; it owns the queue,
+  decides what may start, and collects events and results;
+- a **primary worker** is a depth-one child process that runs the application
+  `Strategy` and reuses resources created inside that process;
+- a **child worker** is an optional depth-two process for a managed strategy
+  subtask;
+- **admission** is the queue decision to grant work now, wait for a condition,
+  or report that no work remains;
+- the **payload** is a small serializable worker message, normally an ID, path,
+  key, or range;
+- **IPC (inter-process communication)** is the channel carrying tasks, events,
+  and results;
+- **cancellation** signals that new admission must stop and active work should
+  shut down cooperatively.
+
+See [Getting started](docs/en/getting-started.md) for complete definitions and
+the first-run model.
+
+## Installation and first result
+
+PHP 8.4+ and Composer are required:
 
 ```bash
 composer require fedor/work-orchestrator:^0.4
 ```
 
-PHP 8.4+ is required. Objects crossing a process boundary must be serializable
-in the Composer worker environment.
+From a repository checkout, run the reproducible first scenario:
 
-## Minimal run
-
-```php
-<?php
-
-use Amp\Cancellation;
-use Fedor\WorkOrchestrator\Contract\Strategy;
-use Fedor\WorkOrchestrator\Orchestrator;
-use Fedor\WorkOrchestrator\Scheduling\OrderedWorkQueue;
-use Fedor\WorkOrchestrator\WorkEnvelope;
-use Fedor\WorkOrchestrator\WorkId;
-
-final readonly class RebuildCustomer
-{
-    public function __construct(public int $customerId) {}
-}
-
-/** @implements Strategy<RebuildCustomer, int> */
-final class RebuildCustomerStrategy implements Strategy
-{
-    /** @param WorkEnvelope<RebuildCustomer> $work */
-    public function run(WorkEnvelope $work, Cancellation $cancellation): int
-    {
-        $cancellation->throwIfRequested();
-
-        return $work->payload->customerId;
-    }
-}
-
-$queue = new OrderedWorkQueue([
-    new WorkEnvelope(new WorkId('customer:42'), new RebuildCustomer(42)),
-    new WorkEnvelope(new WorkId('customer:77'), new RebuildCustomer(77)),
-]);
-
-$result = Orchestrator::fromQueue($queue)
-    ->primaryWorkers(2)
-    ->run(new RebuildCustomerStrategy());
-
-$customerId = $result->value(new WorkId('customer:42'));
+```bash
+composer example:basic
 ```
 
-`WorkId` correlates admission, events, results, and failures. Keep bulk data out
-of the payload; pass an identifier, path, key, or safe range through IPC.
+Expected output:
 
-An `Orchestrator` instance is one-shot. It cannot be reconfigured or run again
-after `run()` starts.
-
-## Files
-
-`FileWorkQueue` discovers files once on the root side, resolves canonical paths,
-captures sizes, and returns an ordinary `WorkQueue<FileEntry>`:
-
-```php
-use Fedor\WorkOrchestrator\File\FileOrder;
-use Fedor\WorkOrchestrator\File\FileWorkQueue;
-
-$queue = FileWorkQueue::discover(
-    ['/data/incoming', '/data/manual.ndjson'],
-    patterns: ['*.ndjson', '/^part-\d+\.json$/i'],
-    order: FileOrder::largestFirst(),
-);
+```text
+customer:42 => 42
+customer:77 => 77
+run => succeeded
 ```
 
-Patterns apply to directory contents; explicitly supplied files are always
-included. Orders include `pathAscending()`, `largestFirst()`, `smallestFirst()`,
-and `custom(Closure)`. The canonical path becomes the `WorkId`; duplicates are
-rejected before workers start. Workers do not reopen a file merely to validate
-the root manifest.
+The scenario creates two stable `WorkId` values, admits them through
+`OrderedWorkQueue`, runs `RebuildCustomerStrategy` in two primary workers, and
+prints results in queue order. Its payload and strategy classes live under
+[`examples/Basic`](examples/Basic), so Composer can load them in newly created
+worker processes. In an application, these classes must live in the
+application's own PSR-4 namespace; defining them only in the entry script is not
+sufficient.
 
-See [`examples/record-import.php`](examples/record-import.php) for a complete
-parse-normalize-write example.
+## AI integration skill
 
-## Barriers and work-conserving fillers
+The package ships a `work-orchestrator` skill for coding agents. In a project
+that uses [`llm/skills`](https://github.com/roxblnfk/skills), install the plugin
+as a development dependency and sync the skill from the installed library:
 
-```php
-use Fedor\WorkOrchestrator\AdmissionPriority;
-use Fedor\WorkOrchestrator\File\FilePriority;
-
-$queue = FileWorkQueue::discoverGrouped(
-    ['/data/gar'],
-    priority: FilePriority::fromBasenamePatterns(
-        [
-            0 => ['AS_ADDR_OBJ_*.XML'],
-            10 => ['AS_HOUSES_*.XML'],
-        ],
-        unmatched: AdmissionPriority::opportunistic(),
-    ),
-    withinGroup: FileOrder::largestFirst(),
-    patterns: ['*.XML'],
-);
+```bash
+composer require --dev llm/skills
+composer skills:update fedor/work-orchestrator
 ```
 
-Every strict item in the open group must finish before the next group opens.
-Opportunistic items may occupy workers that would otherwise be idle while that
-strict group is in flight, but they never open the next barrier. This keeps
-independent small dictionaries useful without violating dependency order.
+Then invoke `$work-orchestrator`. Before selecting classes or writing code, the
+skill interactively resolves the finite work set, observable result, identity
+and payload, ordering/barriers, process-local resources, subtasks,
+retry/idempotency, cancellation, and the owner of durable recovery. It then
+presents one Integration Contract for confirmation.
 
-For arbitrary payloads, use `OrderedWorkQueue` or `GroupedWorkQueue` directly,
-or implement a finite root-local `WorkQueue`.
+The skill source is
+[`resources/skills/work-orchestrator`](resources/skills/work-orchestrator/SKILL.md).
 
-## Process-local bootstrap
+## Where to go next
 
-Implement `BootstrapsApplication` when a strategy needs a database connection,
-parser, or DI container. `boot()` runs once after each primary starts and
-`close()` runs during shutdown. These resources are created inside the worker
-and reused across its work items instead of being serialized from root.
+| Goal | Guide |
+| --- | --- |
+| Understand serialization, `WorkId`, results, and first-run constraints | [Getting started](docs/en/getting-started.md) |
+| Choose an ordered, grouped, file, or custom queue | [Queues, barriers, and admission extensions](docs/en/work-queues.md) |
+| Create process-local resources or split work across Fibers/child workers | [Managed tasks](docs/en/managed-tasks.md) |
+| Connect hooks, events, diagnostics, and recovery | [Observability and recovery](docs/en/observability-and-recovery.md) |
+| Find the role of a public class or interface | [Public API reference](docs/en/public-api.md) |
+| Study the root → primary → child protocol | [Runtime protocol](docs/en/worker-pipeline.md) |
+| Run a complete NDJSON parse-normalize-write flow | [Record import example](docs/en/record-import-example.md) |
 
-`ProvidesContainer` and `ProvidesManagedTaskBootstrap` cover container-aware
-child handlers. Logging can come from that worker-local container; core does
-not require a separate logging contract.
+## Guarantees and boundaries
 
-## Managed child tasks
+`Orchestrator` is one-shot: after `run()` starts it cannot be reconfigured or
+run again. Its `RunResult` retains successful and unsuccessful outcomes for
+admitted work, bounded diagnostics, and observer failures.
 
-A strategy implementing `UsesManagedTasks` receives a fresh
-`ManagedTaskGroup` for every root work item:
-
-```php
-$first = $tasks->submit(new ParseRange($path, 0, 1000));
-$second = $tasks->submit(new ParseRange($path, 1000, 2000));
-$tasks->join();
-
-$rows = [...$first->value(), ...$second->value()];
-```
-
-A `ManagedTask` is a small serializable message whose `handler()` names a
-`ManagedTaskHandler`. The group is structured: child work cannot outlive its
-parent. Depth is capped at root → primary → child; a child cannot create another
-pool. Configuration methods are:
-
-- `primaryWorkers(n)` for active primary OS processes;
-- `childWorkersPerPrimary(n)` for reusable child processes per primary;
-- `concurrentTasksPerPrimary(n)` for Fiber concurrency inside a primary;
-- `maxIpcPayloadBytes(n)` for serialized control-plane payloads;
-- `cancellationGrace(seconds)` for cooperative cleanup time.
-
-## Lifecycle and events
-
-Root-local hooks are configured with `beforeRun`, `onWorkerLifecycle`,
-`beforeTask`, `onTaskLifecycle`, `onApplicationEvent`, `afterTask`, `afterRun`,
-and `onObserverFailure`. They observe the run but are not serialized into a
-worker.
-
-Application code may publish a small serializable event from a strategy,
-handler, or deeper service:
-
-```php
-ProcessEvents::emit(new RowsParsed($count));
-```
-
-The envelope preserves `runId`, `WorkId`, task and parent task IDs, process
-role, depth, PID, and sequence. Do not use the event channel for bulk data.
-
-## Results, failures, and recovery
-
-`RunResult` is a complete ledger available after success, partial failure, or
-cancellation:
-
-- `results()` returns every admitted `WorkResult`;
-- `values()` returns successful values in admission order;
-- `result(WorkId)` provides non-throwing keyed outcome access;
-- `value(WorkId)` returns the value or throws typed `WorkFailed` with the same
-  diagnostic;
-- `diagnostics()` returns bounded structured failure evidence;
-- `observerFailures()` retains root observer failures;
-- `throwIfFailed()` optionally switches to exception flow.
-
-A diagnostic carries failure kind and origin
-(role/executor/PID/WorkId/task/attempt), at most 5 stack frames and 3 previous
-causes, plus explicit truncation counters. Function arguments, payloads, local
-variables, environment values, and container objects are never captured.
-
-`HandlesTaskFailure` lets a strategy retry or finish its current work item
-within a bounded attempt count. `WorkerCrashPolicy` handles a vanished primary
-process separately. This library is not a durable dispatcher: after the whole
-runtime dies, the application or operator decides whether to start a new run.
+Core does not parse XML/CSV/JSON, open transactions, persist an inbox/outbox, or
+choose business ordering. Do not move bulk data through IPC; give a worker a
+recipe for opening the resource locally. If the whole runtime dies, the
+application or operator owns restart decisions and protection against duplicate
+effects.
 
 ## Migrating from `fedor/async-parser`
 
-The `0.4` line is a breaking rename without compatibility aliases:
-
-- package and namespace become `fedor/work-orchestrator` and
-  `Fedor\WorkOrchestrator`;
-- `AsyncParser::fromFiles()` becomes explicit
-  `Orchestrator::fromQueue(FileWorkQueue::discover(...))` composition;
-- `FileTask`, the handler registry, and worker bootstrap collapse into one
-  application `Strategy` plus optional capability interfaces;
-- a file path is no longer core identity: a generic queue carries
-  `WorkEnvelope(WorkId, payload)` and results are read through `WorkResult`.
-
-Legacy classes and the old facade are intentionally not retained. Update the
-package constraint, namespace imports, and queue composition as one cohesive
-application change.
-
-## Responsibility boundary
-
-Core does not parse XML/CSV/JSON, provide checkpoint/resume, persist an
-inbox/outbox, or decide business ordering. It provides finite admission,
-bounded process depth, cancellation, cleanup, observability, and an honest
-result. Data formats, transactions, idempotency, and retry semantics belong to
-the strategy and application.
-
-See [docs/en/worker-pipeline.md](docs/en/worker-pipeline.md) for the process
-protocol.
+The `0.4` line is a breaking rename without compatibility aliases. Package and
+namespace become `fedor/work-orchestrator` and `Fedor\WorkOrchestrator`;
+`AsyncParser::fromFiles()` becomes explicit
+`Orchestrator::fromQueue(FileWorkQueue::discover(...))` composition; and a
+`Strategy` plus optional capability interfaces replaces the file-specific
+handler registry. Update the constraint, imports, and composition as one
+cohesive change.
 
 See [CHANGELOG.en.md](CHANGELOG.en.md) for release changes.
