@@ -2,17 +2,15 @@
 
 [Русский](CONTRIBUTING.md)
 
-While the package is incubated inside `geo-registry`, the parent Git repository
-is its canonical history. Do not create a nested `.git` directory in the
-library. Without a registered submodule, the parent sees an embedded repository
-and other checkouts lose the package contents.
+The canonical package history lives in the standalone
+`wolfcharaa/work-orchestrator` repository. Consumer application changes belong
+to their own repositories and stay separate from the library's public contract.
 
 ## Commit boundaries
 
-- Library changes use a path-scoped `app/library/work-orchestrator/**` commit with
-  one reason for change.
-- Application integration (`app/composer.json`, `app/composer.lock`, and
-  application code) is a separate commit.
+- One commit contains one reason to change the public package.
+- Consumer integration and lock-file updates are committed separately in the
+  consumer repository.
 - A performance checkpoint includes benchmark code and synchronized RU/EN
   results; large raw data is not committed.
 - Messages follow the parent repository conventions, for example
@@ -20,28 +18,26 @@ and other checkouts lose the package contents.
 - Public API, documentation, and tests for one contract may form one atomic
   commit. Unrelated refactoring stays separate.
 
-These boundaries keep the current history readable and allow the package to be
-extracted later without copying a snapshot by hand.
+These boundaries preserve independent release and consumer histories.
 
-## Extracting standalone history
+## Releasing
 
-Once a dedicated remote and release policy exist, split the path history from
-the parent repository:
+Release only from a clean `main` after RU/EN documentation parity and all checks
+pass. An annotated Git tag such as `v0.4.0` defines the version; Composer does
+not keep a separate version field.
 
 ```bash
-git subtree split \
-  --prefix=app/library/work-orchestrator \
-  --branch=work-orchestrator-history
+composer validate --strict
+composer check
+composer benchmark:worker-files -- --help
+composer benchmark:record-pipeline -- --help
+git tag -a v0.4.0 -m "Work Orchestrator 0.4.0"
 ```
 
-This command is not run yet and does not change the current layout. Review the
-resulting branch, then push it to the new repository. Choose application
-integration separately afterward: a Composer package, a registered Git
-submodule, or an explicit subtree workflow. An unregistered nested repository
-is never used.
-
-Before extraction, reproducible checkpoints may use annotated tags prefixed
-with `work-orchestrator/`; create a tag only after successful checks.
+Publish the verified `main` first, then tag and publish the same commit.
+Packagist must point to the canonical GitHub repository. The release is not
+consumer-ready until `composer show fedor/work-orchestrator --all` discovers the
+new tag.
 
 ## Checks
 

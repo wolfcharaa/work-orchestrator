@@ -1,6 +1,14 @@
 {
     "name": "fedor/work-orchestrator",
     "description": "Finite concurrent and parallel work orchestration with managed subprocess lifecycles",
+    "keywords": [
+        "amphp",
+        "concurrency",
+        "orchestration",
+        "parallel-processing",
+        "worker-pool"
+    ],
+    "homepage": "https://github.com/wolfcharaa/work-orchestrator",
     "license": "MIT",
     "type": "library",
     "require": {
@@ -49,5 +57,9 @@
             "php": "8.4.1"
         },
         "sort-packages": true
+    },
+    "support": {
+        "issues": "https://github.com/wolfcharaa/work-orchestrator/issues",
+        "source": "https://github.com/wolfcharaa/work-orchestrator"
     }
 }

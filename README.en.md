@@ -12,30 +12,6 @@ command, DTO, durable range locator, or `FileEntry`.
 
 ## Installation
 
-The package is currently incubated inside its parent repository and does not
-claim a standalone public Composer release channel. The current application
-already configures its path repository. For another checkout, first declare the
-local path and an explicit version mapping:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "/absolute/path/to/work-orchestrator",
-            "options": {
-                "symlink": true,
-                "versions": {
-                    "fedor/work-orchestrator": "0.4.0"
-                }
-            }
-        }
-    ]
-}
-```
-
-After configuring the repository:
-
 ```bash
 composer require fedor/work-orchestrator:^0.4
 ```
@@ -246,3 +222,5 @@ the strategy and application.
 
 See [docs/en/worker-pipeline.md](docs/en/worker-pipeline.md) for the process
 protocol.
+
+See [CHANGELOG.en.md](CHANGELOG.en.md) for release changes.

@@ -12,30 +12,6 @@ DTO, ссылкой на диапазон данных или `FileEntry`.
 
 ## Установка
 
-Пакет пока инкубируется внутри родительского repository и не объявляет
-отдельный публичный Composer release channel. В текущем приложении path
-repository уже настроен. Для другого checkout сначала добавьте локальный path и
-явное соответствие версии:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "/absolute/path/to/work-orchestrator",
-            "options": {
-                "symlink": true,
-                "versions": {
-                    "fedor/work-orchestrator": "0.4.0"
-                }
-            }
-        }
-    ]
-}
-```
-
-После настройки repository:
-
 ```bash
 composer require fedor/work-orchestrator:^0.4
 ```
@@ -243,3 +219,5 @@ cleanup, наблюдаемость и честный результат. Фор
 идемпотентность и семантика retry принадлежат стратегии и приложению.
 
 Подробнее о протоколе процессов: [docs/ru/worker-pipeline.md](docs/ru/worker-pipeline.md).
+
+Изменения релизов: [CHANGELOG.md](CHANGELOG.md).
