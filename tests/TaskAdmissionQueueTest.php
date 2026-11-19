@@ -68,6 +68,27 @@ final class WorkQueueTest
         Assert::true($queue->acquire() instanceof Exhausted);
     }
 
+    public function testGroupedQueueKeepsUnadmittedSiblingsInTheOpenGroup(): void
+    {
+        $queue = new GroupedWorkQueue([
+            self::work('dictionary-a.xml', 'dictionary-b.xml'),
+            self::work('objects.xml'),
+        ]);
+
+        $first = $queue->acquire();
+        Assert::true($first instanceof Granted);
+        $queue->complete($first->lease, TaskOutcome::succeeded(null));
+
+        $second = $queue->acquire();
+        Assert::true($second instanceof Granted);
+        Assert::same($second->lease->work->payload, 'dictionary-b.xml');
+        $queue->complete($second->lease, TaskOutcome::succeeded(null));
+
+        $third = $queue->acquire();
+        Assert::true($third instanceof Granted);
+        Assert::same($third->lease->work->payload, 'objects.xml');
+    }
+
     public function testCompletionRejectsACompletedLease(): void
     {
         $queue = new OrderedWorkQueue(self::work('one.xml'));

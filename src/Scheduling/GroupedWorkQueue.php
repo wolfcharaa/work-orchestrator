@@ -141,7 +141,12 @@ final class GroupedWorkQueue extends AbstractTaskQueue implements WorkQueue
         }
 
         --$this->inFlightInGroup;
-        if ($this->inFlightInGroup === 0) {
+        $tasks = $this->groups[$this->group] ?? null;
+        if (
+            $this->inFlightInGroup === 0
+            && $tasks !== null
+            && $this->nextInGroup >= \count($tasks)
+        ) {
             $this->openNextGroup();
         }
     }

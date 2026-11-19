@@ -7,6 +7,7 @@ namespace Fedor\WorkOrchestrator\Tests;
 use Fedor\WorkOrchestrator\Orchestrator;
 use Fedor\WorkOrchestrator\Result\FailureKind;
 use Fedor\WorkOrchestrator\RunStatus;
+use Fedor\WorkOrchestrator\Scheduling\GroupedWorkQueue;
 use Fedor\WorkOrchestrator\Scheduling\OrderedWorkQueue;
 use Fedor\WorkOrchestrator\Tests\Fixture\NumberPayload;
 use Fedor\WorkOrchestrator\Tests\Fixture\SquareNumberStrategy;
@@ -32,6 +33,23 @@ final class GenericWorkTest
 
         Assert::same($result->values(), [36, 49]);
         Assert::same($result->value(new WorkId('number:7')), 49);
+    }
+
+    public function testOnePrimaryProcessesEverySiblingBeforeTheNextStrictGroup(): void
+    {
+        $queue = new GroupedWorkQueue([
+            [
+                new WorkEnvelope(new WorkId('number:2'), new NumberPayload(2)),
+                new WorkEnvelope(new WorkId('number:3'), new NumberPayload(3)),
+            ],
+            [new WorkEnvelope(new WorkId('number:4'), new NumberPayload(4))],
+        ]);
+
+        $result = Orchestrator::fromQueue($queue)
+            ->primaryWorkers(1)
+            ->run(new SquareNumberStrategy());
+
+        Assert::same($result->values(), [4, 9, 16]);
     }
 
     public function testItRejectsAnOversizedTopLevelRequestBeforeWorkerSubmission(): void
