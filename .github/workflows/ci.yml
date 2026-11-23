@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4', '8.5', '8.6']
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Resolve dependencies for this PHP branch
+        run: |
+          composer config platform.php "${{ matrix.php }}.0"
+          composer update --with-all-dependencies --no-interaction --no-progress --prefer-dist
+
+      - name: Check source and process behavior
+        run: composer check
+
+      - name: Check the clean-consumer process boundary
+        run: composer consumer:check
+
+      - name: Build the installable archive
+        run: composer archive --format=zip --dir=/tmp/work-orchestrator-dist
+
+      - name: Check the actual archive consumer
+        run: |
+          archive="$(find /tmp/work-orchestrator-dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "${archive}"
+          unzip -Z1 "${archive}" > /tmp/work-orchestrator-members.txt
+          if grep -Eq '(^|/)(tests|\.github|vendor|benchmarks|\.context|var|build)/' /tmp/work-orchestrator-members.txt; then
+            echo 'Archive contains a forbidden maintainer/runtime artifact.' >&2
+            exit 1
+          fi
+          for required in bin/work-orchestrator-worker README.md README.en.md docs/en/getting-started.md docs/ru/getting-started.md resources/skills/work-orchestrator/SKILL.md; do
+            grep -Fxq "${required}" /tmp/work-orchestrator-members.txt
+          done
+          WORK_ORCHESTRATOR_ARCHIVE="${archive}" bash bin/check-consumer-example
+
+  lowest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up exact lowest PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3.0'
+          coverage: none
+          tools: composer:v2
+
+      - name: Resolve lowest supported dependencies
+        run: |
+          composer config platform.php 8.3.0
+          composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress --prefer-dist
+
+      - name: Check lowest source and process behavior
+        run: composer check
+
+      - name: Check lowest clean consumer
+        run: composer consumer:check
+
+      - name: Check lowest actual archive consumer
+        run: |
+          composer archive --format=zip --dir=/tmp/work-orchestrator-dist
+          archive="$(find /tmp/work-orchestrator-dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "${archive}"
+          WORK_ORCHESTRATOR_ARCHIVE="${archive}" bash bin/check-consumer-example

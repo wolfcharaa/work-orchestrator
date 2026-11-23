@@ -1,0 +1,43 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$options = getopt('', ['role:', 'id:', 'primary:', 'autoload:', 'limit:']);
+if (!is_array($options)
+    || !isset($options['role'], $options['id'], $options['primary'], $options['autoload'], $options['limit'])
+    || !is_string($options['role'])
+    || !is_string($options['id'])
+    || !is_string($options['primary'])
+    || !is_string($options['autoload'])
+    || !is_string($options['limit'])) {
+    fwrite(STDERR, "Invalid Work Orchestrator worker arguments.\n");
+    exit(64);
+}
+
+$autoload = realpath($options['autoload']);
+if ($autoload === false || !is_file($autoload) || !is_readable($autoload)) {
+    fwrite(STDERR, "Composer autoloader is unavailable.\n");
+    exit(66);
+}
+
+require $autoload;
+
+try {
+    $role = \Fedor\WorkOrchestrator\Internal\Protocol\WorkerRole::from($options['role']);
+    $primary = filter_var($options['primary'], FILTER_VALIDATE_INT);
+    $limit = filter_var($options['limit'], FILTER_VALIDATE_INT);
+    if (!is_int($primary) || $primary < 0 || !is_int($limit) || $limit < 1 || $options['id'] === '') {
+        throw new InvalidArgumentException('Invalid worker identity or limit.');
+    }
+
+    exit(\Fedor\WorkOrchestrator\Internal\Native\WorkerMain::run(
+        $role,
+        $options['id'],
+        $primary,
+        $limit,
+    ));
+} catch (Throwable $failure) {
+    fwrite(STDERR, $failure::class . ': ' . $failure->getMessage() . "\n");
+    exit(70);
+}

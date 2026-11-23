@@ -13,10 +13,12 @@ root process
   Orchestrator
     ├─ владеет конечным WorkQueue, допуском и барьерами
     ├─ создаёт primary pool заданного размера
+    ├─ лениво создаёт managed pools как свои прямые OS-children
     ├─ один раз устанавливает Strategy в каждый primary
-    ├─ выдаёт WorkEnvelope и непрерывно принимает события
+    ├─ выдаёт WorkEnvelope и маршрутизирует managed requests/results
+    ├─ дренирует protocol, stdout, stderr и live events
     ├─ агрегирует результаты в порядке допуска
-    └─ отменяет, освобождает ресурсы и останавливает pool
+    └─ отменяет, finalizes, останавливает и reap-ит все direct children
 
 primary worker (depth 1)
   WorkerRuntime
@@ -25,16 +27,18 @@ primary worker (depth 1)
     ├─ для каждого WorkEnvelope создаёт structured ManagedTaskGroup
     ├─ выполняет Strategy::run()
     ├─ дожидается всех managed tasks
-    └─ закрывает child pool, затем Strategy::close()
+    └─ закрывает Strategy resources по finalize-команде root
 
-child worker (depth 2)
+managed worker (логический depth 2; direct OS-child root)
   ManagedTaskHandler
     └─ выполняет небольшое сериализуемое ManagedTask-сообщение
 ```
 
-Root координирует, но не знает смысла данных задачи. Primary выполняет полезную работу
-стратегии. Child — опциональная изоляция подзадач стратегии. Управляемая глубина
-намеренно заканчивается на child: вложенный child pool не создаётся.
+Root координирует, но не знает смысла данных задачи. Primary отправляет
+managed requests обратно root по тому же framed protocol. Root назначает
+их reusable managed workers и возвращает outcomes/events primary. Primary не
+fork-ает и не владеет OS-child, поэтому root может напрямую остановить и
+reap-нуть весь граф.
 
 ## Почему допуск отделён от Strategy
 
@@ -102,16 +106,16 @@ object:
 - `RoutesChildApplicationEvents` решает, какие child events поднимать в root.
 
 `boot()` происходит после запуска primary. `close()` должен быть idempotent и
-вызывается также после частичного boot failure. При shutdown сначала закрывается
-child pool, затем ресурсы стратегии: child не должен увидеть уже закрытое
-соединение или parser.
+вызывается также после частичного boot failure. При normal shutdown root сначала
+убеждается, что useful и managed work settled, затем посылает finalize всем
+direct workers и дренирует terminal protocol/output до reap.
 
 ## Структурированные managed tasks
 
 Перед `run()` стратегия с `UsesManagedTasks` получает новую группу. `submit()`
 выбирает executor через `TaskExecutionPolicy` и сразу возвращает `TaskHandle`.
 Concurrent task выполняется Fiber-ом внутри primary с ограниченным числом slots. Parallel
-task отправляется в переиспользуемый child pool.
+task маршрутизируется через root в лениво созданный reusable managed pool.
 
 Группа принадлежит одному WorkEnvelope:
 
@@ -131,8 +135,8 @@ parentTaskId, роль процесса, depth и sourceId. `ProcessEvents::emit
 внутри активного task scope и отправляет `ApplicationEvent` в root. Runtime
 добавляет PID, monotonic sequence внутри source и timestamp.
 
-Root непрерывно дренирует event channel параллельно ожиданию результата, поэтому
-worker не блокируется на заполненном канале. События жизненного цикла core и application
+Root непрерывно дренирует framed fd 3/4 параллельно ожиданию результата.
+stdout/stderr идут отдельно и хранятся только как bounded diagnostic tails. События жизненного цикла core и application
 events разведены по observers. Ошибка observer не подменяет ошибку задачи и
 попадает в `observerFailures()`.
 
@@ -159,8 +163,8 @@ Application failure означает, что primary жив и может вып
 Внешняя отмена объединяется с внутренней остановкой run. Новые задачи
 перестают выдаваться, активные primary/child получают cancellation, root
 продолжает собирать доступные outcomes и diagnostics. На совместное освобождение ресурсов
-отводится `cancellationGrace`; затем зависший managed worker принудительно
-останавливается.
+отводится `cancellationGrace`; затем root посылает TERM, ждёт
+`forceKillAfter`, посылает KILL при необходимости и reap-ит каждый owned process.
 
 Root hooks не пересекают process boundary. Они запускаются вокруг run, worker и
 task lifecycle. Стратегия, payload, managed tasks, events и результаты должны

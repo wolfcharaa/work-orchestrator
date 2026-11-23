@@ -17,8 +17,9 @@ use Fedor\WorkOrchestrator\ExecutionMode;
 use Fedor\WorkOrchestrator\Result\FailureDiagnostic;
 use Fedor\WorkOrchestrator\TaskHandle;
 use LogicException;
+use Throwable;
 
-/** One task-local structured group spanning concurrent and parallel executors. @internal */
+/** One task-local structured group spanning concurrent and process executors. @internal */
 final class DefaultManagedTaskGroup implements ManagedTaskGroup
 {
     /** @var list<TaskHandle> */
@@ -85,7 +86,7 @@ final class DefaultManagedTaskGroup implements ManagedTaskGroup
         $this->joined = true;
         $failures = [];
         foreach ($this->handles as $handle) {
-            $outcome = $handle->outcome();
+            $outcome = $handle->outcome($this->cancellation);
             foreach ($outcome->diagnostics as $diagnostic) {
                 $this->diagnostics[] = $diagnostic;
             }
@@ -100,7 +101,7 @@ final class DefaultManagedTaskGroup implements ManagedTaskGroup
         }
     }
 
-    public function cancel(\Throwable $cause): void
+    public function cancel(Throwable $cause): void
     {
         $this->stop->cancel($cause);
     }

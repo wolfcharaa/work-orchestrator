@@ -11,7 +11,7 @@ use Fedor\WorkOrchestrator\Contract\WorkerCrashPolicy;
 use Fedor\WorkOrchestrator\Contract\WorkQueue;
 use Fedor\WorkOrchestrator\Exception\InvalidRunRequest;
 use Fedor\WorkOrchestrator\Internal\AbortWorkerCrashPolicy;
-use Fedor\WorkOrchestrator\Internal\ParallelWorkRunner;
+use Fedor\WorkOrchestrator\Internal\NativeWorkRunner;
 use Fedor\WorkOrchestrator\Internal\RootHooks;
 use Fedor\WorkOrchestrator\Internal\WorkerRuntimeConfiguration;
 use Fedor\WorkOrchestrator\Result\RunResult;
@@ -44,7 +44,8 @@ use Fedor\WorkOrchestrator\Result\RunResult;
  * rejected.
  *
  * Root configuration includes primaryWorkers(), childWorkersPerPrimary(),
- * concurrentTasksPerPrimary(), maxIpcPayloadBytes(), cancellationGrace(), and
+ * concurrentTasksPerPrimary(), maxIpcPayloadBytes(), cancellationGrace(),
+ * forceKillAfter(), workerOutputTailBytes(), workerAutoloader(), and
  * workerCrashPolicy(). Root-local lifecycle and application observers are
  * registered through the before/on/after hook methods; observer failures are
  * isolated from useful work and retained in RunResult. Strategy capability
@@ -68,6 +69,13 @@ final class Orchestrator
     private int $maxIpcPayloadBytes = 1_048_576;
 
     private float $cancellationGraceSeconds = 5.0;
+
+    private float $forceKillSeconds = 2.0;
+
+    /** @var positive-int */
+    private int $workerOutputTailBytes = 16_384;
+
+    private ?string $workerAutoloader = null;
 
     private bool $used = false;
 
@@ -112,7 +120,8 @@ final class Orchestrator
     }
 
     /**
-     * Limits reusable depth-two worker processes owned by each primary.
+     * Limits reusable logical depth-two workers associated with each primary.
+     * Every worker remains a direct OS child owned and reaped by root.
      * Relevant only to Strategies implementing UsesManagedTasks.
      */
     public function childWorkersPerPrimary(int $limit): static
@@ -170,6 +179,45 @@ final class Orchestrator
         }
 
         $this->cancellationGraceSeconds = $seconds;
+
+        return $this;
+    }
+
+    /** Time allowed after TERM before an uncooperative worker receives KILL. */
+    public function forceKillAfter(float $seconds): static
+    {
+        $this->assertConfigurable();
+        if ($seconds < 0) {
+            throw new InvalidRunRequest('Force-kill period must not be negative.');
+        }
+
+        $this->forceKillSeconds = $seconds;
+
+        return $this;
+    }
+
+    /** Bounds retained stdout/stderr evidence for each worker process. */
+    public function workerOutputTailBytes(int $bytes): static
+    {
+        $this->assertConfigurable();
+        if ($bytes < 1) {
+            throw new InvalidRunRequest('Worker output tail limit must be positive.');
+        }
+
+        $this->workerOutputTailBytes = $bytes;
+
+        return $this;
+    }
+
+    /** Overrides automatic Composer autoloader discovery for clean child processes. */
+    public function workerAutoloader(string $path): static
+    {
+        $this->assertConfigurable();
+        if ($path === '') {
+            throw new InvalidRunRequest('Worker autoloader path must not be empty.');
+        }
+
+        $this->workerAutoloader = $path;
 
         return $this;
     }
@@ -261,7 +309,7 @@ final class Orchestrator
         $this->assertConfigurable();
         $this->used = true;
 
-        return ParallelWorkRunner::run(
+        return NativeWorkRunner::run(
             queue: $this->queue,
             strategy: $strategy,
             workerLimit: $this->primaryWorkers,
@@ -270,10 +318,13 @@ final class Orchestrator
                 concurrentTasks: $this->concurrentTasks,
                 maxIpcPayloadBytes: $this->maxIpcPayloadBytes,
                 cancellationGraceSeconds: $this->cancellationGraceSeconds,
+                forceKillSeconds: $this->forceKillSeconds,
+                outputTailBytes: $this->workerOutputTailBytes,
             ),
             hooks: $this->hooks,
             workerCrashPolicy: $this->workerCrashPolicy,
             cancellation: $cancellation,
+            autoloadPath: $this->workerAutoloader,
         );
     }
 

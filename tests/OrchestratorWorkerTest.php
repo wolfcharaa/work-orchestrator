@@ -14,6 +14,7 @@ use Fedor\WorkOrchestrator\Exception\InvalidRunRequest;
 use Fedor\WorkOrchestrator\File\FileEntry;
 use Fedor\WorkOrchestrator\File\FileOrder;
 use Fedor\WorkOrchestrator\File\FileWorkQueue;
+use Fedor\WorkOrchestrator\Hook\WorkerStopped;
 use Fedor\WorkOrchestrator\Orchestrator;
 use Fedor\WorkOrchestrator\Result\FailureKind;
 use Fedor\WorkOrchestrator\RunStatus;
@@ -260,6 +261,7 @@ final class OrchestratorWorkerTest
     {
         $path = self::temporaryFile('blocking');
         $source = new DeferredCancellation();
+        $cleanStops = [];
         async(static function () use ($source): void {
             delay(0.1);
             $source->cancel();
@@ -269,6 +271,12 @@ final class OrchestratorWorkerTest
             $startedAt = \microtime(true);
             $result = Orchestrator::fromQueue(FileWorkQueue::discover([$path]))
                 ->cancellationGrace(0.1)
+                ->forceKillAfter(0.1)
+                ->onWorkerLifecycle(static function (object $event) use (&$cleanStops): void {
+                    if ($event instanceof WorkerStopped) {
+                        $cleanStops[] = $event->clean;
+                    }
+                })
                 ->run(new BlockingStrategy(), $source->getCancellation());
             $duration = \microtime(true) - $startedAt;
         } finally {
@@ -276,6 +284,7 @@ final class OrchestratorWorkerTest
         }
 
         Assert::same($result->status, RunStatus::Cancelled);
+        Assert::same($cleanStops, [false]);
         Assert::true($duration < 1.0);
     }
 

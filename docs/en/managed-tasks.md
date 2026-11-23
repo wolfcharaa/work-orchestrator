@@ -97,9 +97,10 @@ inspect `TaskOutcome` instead. Explicit `join()` is useful for side-effect-only
 work, but runtime always joins every task after `run()` returns. New submits are
 forbidden after join.
 
-If strategy processing fails, the group is cancelled and still joined. The
-child pool closes before `Strategy::close()`, so child work cannot observe an
-already-closed primary-local resource.
+If strategy processing fails, the group is cancelled and still joined. Root
+does not begin process finalization until managed work has settled. Primary and
+managed process-local close hooks are independent, so consumers must not rely
+on an ordering between them.
 
 ## Concurrent or Parallel
 
@@ -113,8 +114,10 @@ mode for each `ManagedTask`:
 
 An unknown task defaults to `Parallel`, the stronger isolation. Per primary,
 `concurrentTasksPerPrimary(n)` bounds Fiber slots and
-`childWorkersPerPrimary(n)` bounds child processes. With `P` primaries and `C`
-children, the upper bound is `1 + P + P*C` processes.
+`childWorkersPerPrimary(n)` bounds a lazy managed pool. Managed workers are
+logical depth-two workers but direct OS children of root, which owns their
+termination and reaping. With `P` primaries and `C` children, the upper bound is
+`1 + P + P*C` processes.
 
 ## How a handler is created
 
@@ -149,10 +152,13 @@ to the root observer; `Consume` keeps the decision in primary.
 | `Orchestrator` method | Default | Meaning |
 | --- | ---: | --- |
 | `primaryWorkers(n)` | 1 | Simultaneously active primary processes |
-| `childWorkersPerPrimary(n)` | 1 | Reusable child processes per primary |
+| `childWorkersPerPrimary(n)` | 1 | Lazy reusable managed workers associated with each primary |
 | `concurrentTasksPerPrimary(n)` | 1 | Fiber slots per primary |
 | `maxIpcPayloadBytes(n)` | 1 MiB | Serialized task/event/result control-message bound |
 | `cancellationGrace(seconds)` | 5.0 | Cooperative cleanup time before force-stop |
+| `forceKillAfter(seconds)` | 2.0 | Time after TERM before KILL |
+| `workerOutputTailBytes(bytes)` | 16 KiB | Retained stdout/stderr tail per worker |
+| `workerAutoloader(path)` | auto | Composer autoloader override for clean workers |
 
 Choose limits against CPU, RAM, file descriptors, and database/disk throughput.
 There is no global child budget shared across primaries.

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Fedor\WorkOrchestrator;
 
-use Amp\Sync\Channel;
 use Fedor\WorkOrchestrator\Contract\ApplicationEvent;
 use Fedor\WorkOrchestrator\Event\CoreEvent;
 use Fedor\WorkOrchestrator\Event\EventContext;
@@ -12,6 +11,7 @@ use Fedor\WorkOrchestrator\Event\EventEnvelope;
 use Fedor\WorkOrchestrator\Exception\ProcessEventScopeUnavailable;
 use Fedor\WorkOrchestrator\Internal\EventBindingToken;
 use Fedor\WorkOrchestrator\Internal\EventChannelBinding;
+use Fedor\WorkOrchestrator\Internal\EventEmitter;
 use Fedor\WorkOrchestrator\Internal\EventScopeState;
 use Fedor\WorkOrchestrator\Internal\EventScopeToken;
 use Revolt\EventLoop\FiberLocal;
@@ -21,7 +21,7 @@ use Revolt\EventLoop\FiberLocal;
  *
  * The facade deliberately fails outside an active task. Application code may
  * call emit() from a Strategy, handler, or deeper service without retaining a
- * job-specific AMP channel. Core lifecycle events remain runtime-only.
+ * runtime-specific channel. Core lifecycle events remain runtime-only.
  */
 final class ProcessEvents
 {
@@ -36,11 +36,9 @@ final class ProcessEvents
     }
 
     /**
-     * @param Channel<never, EventEnvelope> $channel
-     *
      * @internal Runtime API; consumers should call emit() only.
      */
-    public static function bind(Channel $channel, int $maxPayloadBytes): EventBindingToken
+    public static function bind(EventEmitter $emitter, int $maxPayloadBytes): EventBindingToken
     {
         if ($maxPayloadBytes < 1) {
             throw new \InvalidArgumentException('Maximum IPC payload must be positive.');
@@ -50,7 +48,7 @@ final class ProcessEvents
             throw new ProcessEventScopeUnavailable('A process event channel is already bound.');
         }
 
-        self::$binding = $binding = new EventChannelBinding($channel, $maxPayloadBytes);
+        self::$binding = $binding = new EventChannelBinding($emitter, $maxPayloadBytes);
 
         return new EventBindingToken($binding);
     }

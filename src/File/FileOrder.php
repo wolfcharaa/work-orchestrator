@@ -21,7 +21,7 @@ final readonly class FileOrder
     public static function pathAscending(): self
     {
         return new self(static fn(FileEntry $left, FileEntry $right): int =>
-            $left->path <=> $right->path);
+            \strnatcmp($left->path, $right->path));
     }
 
     public static function largestFirst(): self

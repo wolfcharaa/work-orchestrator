@@ -18,8 +18,8 @@ job scheduler, or checkpoint/resume after the whole application stops.
   decides what may start, and collects events and results;
 - a **primary worker** is a depth-one child process that runs the application
   `Strategy` and reuses resources created inside that process;
-- a **child worker** is an optional depth-two process for a managed strategy
-  subtask;
+- a **child worker** is an optional logical depth-two worker for a managed
+  subtask; as an OS process it is spawned directly by root;
 - **admission** is the queue decision to grant work now, wait for a condition,
   or report that no work remains;
 - the **payload** is a small serializable worker message, normally an ID, path,
@@ -34,16 +34,18 @@ the first-run model.
 
 ## Installation and first result
 
-PHP 8.4+ and Composer are required:
+PHP 8.3+ and Composer are required. Create a clean consumer project, install
+the package, and copy its minimal application classes:
 
 ```bash
-composer require fedor/work-orchestrator:^0.4
-```
-
-From a repository checkout, run the reproducible first scenario:
-
-```bash
-composer example:basic
+mkdir work-orchestrator-quick-start
+cd work-orchestrator-quick-start
+composer init --name=app/work-orchestrator-quick-start --license=proprietary --autoload=src/ --no-interaction
+composer require fedor/work-orchestrator:^1.0
+cp -R vendor/fedor/work-orchestrator/examples/consumer/src .
+cp -R vendor/fedor/work-orchestrator/examples/consumer/bin .
+composer dump-autoload
+php bin/rebuild-customers.php
 ```
 
 Expected output:
@@ -55,12 +57,30 @@ run => succeeded
 ```
 
 The scenario creates two stable `WorkId` values, admits them through
-`OrderedWorkQueue`, runs `RebuildCustomerStrategy` in two primary workers, and
-prints results in queue order. Its payload and strategy classes live under
-[`examples/Basic`](examples/Basic), so Composer can load them in newly created
-worker processes. In an application, these classes must live in the
-application's own PSR-4 namespace; defining them only in the entry script is not
-sufficient.
+`OrderedWorkQueue`, runs
+`App\WorkOrchestratorQuickStart\Work\RebuildCustomerStrategy` in two primary
+workers, and prints results in queue order. The complete fixture with its own
+Composer/autoload contract lives under
+[`examples/consumer`](examples/consumer/composer.json). Its payload and strategy
+use the application namespace `App\WorkOrchestratorQuickStart`, so Composer can
+load them in newly created worker processes; defining these classes only in the
+entry script is not sufficient.
+
+The production foundation is intentionally narrow: `amphp/amp` and
+`revolt/event-loop` provide cancellation, Futures, Fibers, timers, and
+descriptor readiness. The library itself owns `proc_open`, fd 3/4 IPC,
+stdout/stderr drain, TERM → KILL, and reaping. `amphp/parallel`,
+`amphp/process`, and `amphp/sync` are absent from the production graph.
+`run()` works from plain CLI and from an already managed Amp Fiber without
+starting a competing event loop.
+
+When developing the library itself, the same result remains available from a
+repository checkout:
+
+```bash
+composer install
+composer example:basic
+```
 
 ## AI integration skill
 
@@ -106,9 +126,16 @@ recipe for opening the resource locally. If the whole runtime dies, the
 application or operator owns restart decisions and protection against duplicate
 effects.
 
-## Migrating from `fedor/async-parser`
+## Migration
 
-The `0.4` line is a breaking rename without compatibility aliases. Package and
+In `1.0`, a root-owned direct process graph replaces the `amphp/parallel`
+backend. Familiar Amp contracts for cancellation, Futures, hooks, and
+`ExecutionMode` remain; new process settings are `forceKillAfter()`,
+`workerOutputTailBytes()`, and `workerAutoloader()`. Prove crash/retry and
+cleanup on an alpha/RC before stable cutover; `0.4.x` is the rollback line.
+
+The earlier `0.4` line was a breaking rename from `fedor/async-parser` without
+compatibility aliases. Package and
 namespace become `fedor/work-orchestrator` and `Fedor\WorkOrchestrator`;
 `AsyncParser::fromFiles()` becomes explicit
 `Orchestrator::fromQueue(FileWorkQueue::discover(...))` composition; and a

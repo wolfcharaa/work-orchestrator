@@ -19,8 +19,8 @@ worker-процессов. Приложение по-прежнему опред
   задачу можно выдать, собирает события и результаты;
 - **primary worker** — дочерний процесс первого уровня: выполняет
   пользовательскую `Strategy` и переиспользует созданные в нём ресурсы;
-- **child worker** — необязательный процесс второго уровня: выполняет
-  управляемую подзадачу стратегии;
+- **child worker** — необязательный логический depth-two worker для
+  управляемой подзадачи; как OS-процесс он создаётся напрямую root;
 - **admission (допуск)** — решение очереди выдать задачу сейчас, подождать
   условие или сообщить, что задач больше нет;
 - **payload (данные задачи)** — небольшое сериализуемое сообщение для worker,
@@ -35,16 +35,18 @@ worker-процессов. Приложение по-прежнему опред
 
 ## Установка и первый результат
 
-Требуются PHP 8.4+ и Composer:
+Требуются PHP 8.3+ и Composer. Создайте чистый consumer project, установите
+пакет и скопируйте из него минимальные application-классы:
 
 ```bash
-composer require fedor/work-orchestrator:^0.4
-```
-
-В checkout репозитория первый воспроизводимый сценарий запускается так:
-
-```bash
-composer example:basic
+mkdir work-orchestrator-quick-start
+cd work-orchestrator-quick-start
+composer init --name=app/work-orchestrator-quick-start --license=proprietary --autoload=src/ --no-interaction
+composer require fedor/work-orchestrator:^1.0
+cp -R vendor/fedor/work-orchestrator/examples/consumer/src .
+cp -R vendor/fedor/work-orchestrator/examples/consumer/bin .
+composer dump-autoload
+php bin/rebuild-customers.php
 ```
 
 Ожидаемый вывод:
@@ -56,12 +58,29 @@ run => succeeded
 ```
 
 Сценарий создаёт две задачи с устойчивыми `WorkId`, допускает их через
-`OrderedWorkQueue`, выполняет `RebuildCustomerStrategy` в двух primary workers и
-печатает результаты в порядке очереди. Классы payload и стратегии лежат в
-[`examples/Basic`](examples/Basic), поэтому Composer может загрузить их и в
-новых worker-процессах. В приложении такие классы должны находиться в его
-собственном PSR-4 namespace; объявлять их только внутри запускаемого скрипта
-нельзя.
+`OrderedWorkQueue`, выполняет
+`App\WorkOrchestratorQuickStart\Work\RebuildCustomerStrategy` в двух primary
+workers и печатает результаты в порядке очереди. Полный fixture с собственным
+Composer/autoload contract находится в
+[`examples/consumer`](examples/consumer/composer.json). Payload и стратегия
+живут в application namespace `App\WorkOrchestratorQuickStart`, поэтому Composer
+может загрузить их в новых worker-процессах; объявлять такие классы только
+внутри запускаемого скрипта нельзя.
+
+Production dependency foundation намеренно узок: `amphp/amp` и
+`revolt/event-loop` дают cancellation, Futures, Fibers, timers и readiness
+дескрипторов. Библиотека сама владеет `proc_open`, fd 3/4 IPC,
+stdout/stderr drain, TERM → KILL и reap. `amphp/parallel`, `amphp/process` и
+`amphp/sync` не входят в production graph. `run()` одинаково работает
+из plain CLI и внутри уже управляемого Amp Fiber, не запуская второй
+event loop.
+
+Для разработки самой библиотеки тот же результат остаётся доступен из checkout:
+
+```bash
+composer install
+composer example:basic
+```
 
 ## AI skill для интеграции
 
@@ -107,9 +126,16 @@ inbox/outbox и не выбирает бизнес-порядок. Больши�
 После смерти всего runtime решение о новом запуске и защита от повторных
 эффектов принадлежат приложению или оператору.
 
-## Миграция с `fedor/async-parser`
+## Миграция
 
-Линия `0.4` — несовместимое переименование без compatibility aliases. Package
+В `1.0` backend `amphp/parallel` заменён root-owned direct process graph.
+Знакомые Amp-контракты `Cancellation`, `Future`, hooks и
+`ExecutionMode` сохранены; новые process settings — `forceKillAfter()`,
+`workerOutputTailBytes()` и `workerAutoloader()`. Проверьте crash/retry и
+cleanup на alpha/RC до stable cutover; rollback leg — `0.4.x`.
+
+Более ранняя линия `0.4` была несовместимым переименованием
+`fedor/async-parser` без compatibility aliases. Package
 и namespace стали `fedor/work-orchestrator` и `Fedor\WorkOrchestrator`;
 `AsyncParser::fromFiles()` заменён явной композицией
 `Orchestrator::fromQueue(FileWorkQueue::discover(...))`; вместо file-specific

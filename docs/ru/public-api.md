@@ -20,10 +20,13 @@
 | Метод | Default | Смысл |
 | --- | ---: | --- |
 | `primaryWorkers()` | 1 | Лимит одновременно активных primary processes |
-| `childWorkersPerPrimary()` | 1 | Child processes каждого primary для Parallel managed tasks |
+| `childWorkersPerPrimary()` | 1 | Ленивые managed workers, логически связанные с primary; каждый остаётся прямым child root |
 | `concurrentTasksPerPrimary()` | 1 | Concurrent Fiber slots каждого primary |
 | `maxIpcPayloadBytes()` | 1 MiB | Лимит сериализованного управляющего сообщения |
 | `cancellationGrace()` | 5.0 s | Совместное освобождение ресурсов до принудительной остановки |
+| `forceKillAfter()` | 2.0 s | Время после TERM до KILL всё ещё работающего worker |
+| `workerOutputTailBytes()` | 16 KiB | Ограниченный хвост stdout и stderr каждого worker для диагностики |
+| `workerAutoloader()` | auto | Явный путь к Composer autoloader, когда auto-discovery не подходит |
 | `workerCrashPolicy()` | abort | Root policy потери primary; retry требует отдельной декларации идемпотентности |
 
 Методы `beforeRun`, `onWorkerLifecycle`, `beforeTask`, `onTaskLifecycle`,

@@ -12,11 +12,11 @@
     "license": "MIT",
     "type": "library",
     "require": {
-        "php": "^8.4.1",
+        "php": "^8.3",
         "amphp/amp": "^3.1",
-        "amphp/parallel": "^2.4",
         "psr/container": "^2.0",
-        "symfony/finder": "^8.1"
+        "revolt/event-loop": "^1.0",
+        "symfony/finder": "^7.4 || ^8.1"
     },
     "require-dev": {
         "amphp/file": "^4.0",
@@ -47,6 +47,7 @@
         "example:managed-tasks": "@php examples/managed-tasks.php",
         "example:observability": "@php examples/observability.php",
         "example:record-import": "@php -d memory_limit=-1 examples/record-import.php",
+        "consumer:check": "bash bin/check-consumer-example",
         "check": [
             "@cs-check",
             "@phpstan",
@@ -62,7 +63,7 @@
             "llm/skills": true
         },
         "platform": {
-            "php": "8.4.1"
+            "php": "8.3.0"
         },
         "sort-packages": true
     },

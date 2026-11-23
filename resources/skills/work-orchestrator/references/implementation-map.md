@@ -8,7 +8,7 @@ library source checkout.
 
 | Accepted need | Read and inspect |
 | --- | --- |
-| First finite run, serialization, IDs, result access | `docs/en/getting-started.md` or `docs/ru/getting-started.md`; `examples/basic.php` |
+| First finite run, serialization, IDs, result access | `docs/en/getting-started.md` or `docs/ru/getting-started.md`; `examples/consumer` for a clean application; `examples/basic.php` for repository development |
 | Ordered, grouped, file, or custom admission | `docs/en/work-queues.md` or `docs/ru/work-queues.md`; `examples/CustomQueue` |
 | Primary-local resources and managed tasks | `docs/en/managed-tasks.md` or `docs/ru/managed-tasks.md`; `examples/ManagedTasks` |
 | Hooks, worker events, results, failure/crash recovery | `docs/en/observability-and-recovery.md` or RU equivalent; `examples/Observability` |
@@ -48,7 +48,8 @@ signatures, defaults, generics, or version-specific behavior affect code.
   process-local.
 - A custom queue completes the exact granted `TaskLease` once and wakes blocked
   callers without polling.
-- Managed depth stops at root → primary → child.
+- Managed depth stops at root → primary → child logically; every primary and
+  managed worker remains a direct OS child owned and reaped by root.
 - Crash retry requires explicit item-level idempotency because the old process
   may have completed a side effect.
 - `RunResult` is a ledger; exception flow through `throwIfFailed()` is optional.
@@ -66,9 +67,13 @@ Mirror the nearest repository test rather than inventing a same-process fake:
 - lifecycle/failure policy: `tests/LifecycleAndFailurePolicyTest.php`;
 - managed execution: `tests/ManagedTaskExecutionTest.php`;
 - process events: `tests/ProcessEventsTest.php`;
+- native framing, direct parentage, lazy managed lifecycle, and active-loop
+  compatibility: `tests/NativeProcessRuntimeTest.php`;
 - file adapter: `tests/FileWorkQueueTest.php`;
 - complete examples: `tests/DocumentationExamplesTest.php` and
   `tests/RecordImportExampleTest.php`.
+- package-maintainer clean dependency install and a real primary-worker
+  boundary: `composer consumer:check` from the library source checkout.
 
 When the consumer repository uses another test framework, preserve its
 framework while retaining the same process-boundary evidence.

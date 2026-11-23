@@ -14,10 +14,7 @@ use Fedor\WorkOrchestrator\CompleteAs;
 use Fedor\WorkOrchestrator\Contract\BootstrapsApplication;
 use Fedor\WorkOrchestrator\Contract\HandlesTaskFailure;
 use Fedor\WorkOrchestrator\Contract\ProvidesContainer;
-use Fedor\WorkOrchestrator\Contract\ProvidesManagedTaskBootstrap;
-use Fedor\WorkOrchestrator\Contract\ProvidesManagedTaskCrashPolicy;
 use Fedor\WorkOrchestrator\Contract\ProvidesTaskExecutionPolicy;
-use Fedor\WorkOrchestrator\Contract\RoutesChildApplicationEvents;
 use Fedor\WorkOrchestrator\Contract\Strategy;
 use Fedor\WorkOrchestrator\Contract\UsesManagedTasks;
 use Fedor\WorkOrchestrator\Event\EventContext;
@@ -30,6 +27,7 @@ use Fedor\WorkOrchestrator\Exception\ManagedTaskFailed;
 use Fedor\WorkOrchestrator\Exception\ManagedTaskGroupFailed;
 use Fedor\WorkOrchestrator\Exception\WorkerCleanupFailed;
 use Fedor\WorkOrchestrator\FailCurrent;
+use Fedor\WorkOrchestrator\Internal\Native\PrimaryProtocolClient;
 use Fedor\WorkOrchestrator\ProcessEvents;
 use Fedor\WorkOrchestrator\Result\FailureDiagnostic;
 use Fedor\WorkOrchestrator\Result\FailureKind;
@@ -49,9 +47,9 @@ final class WorkerRuntime
 
     private static ?WorkerRuntimeConfiguration $configuration = null;
 
-    private static ?ConcurrentManagedTaskExecutor $concurrent = null;
+    private static ?PrimaryProtocolClient $protocol = null;
 
-    private static ?ManagedChildWorkerPool $parallel = null;
+    private static ?ConcurrentManagedTaskExecutor $concurrent = null;
 
     /**
      * @template TPayload
@@ -61,6 +59,7 @@ final class WorkerRuntime
     public static function initialize(
         Strategy $strategy,
         WorkerRuntimeConfiguration $configuration,
+        ?PrimaryProtocolClient $protocol,
         Cancellation $cancellation,
     ): void {
         if (self::$strategy !== null) {
@@ -79,39 +78,16 @@ final class WorkerRuntime
             }
 
             if ($strategy instanceof UsesManagedTasks) {
-                $container = $strategy instanceof ProvidesContainer
-                    ? $strategy->container()
-                    : null;
-                $crashPolicy = $strategy instanceof ProvidesManagedTaskCrashPolicy
-                    ? $strategy->managedTaskCrashPolicy()
-                    : new AbortManagedTaskCrashPolicy();
-                if ($crashPolicy->maxAttempts() < 1) {
-                    throw new LogicException('Managed task crash attempt limit must be positive.');
-                }
                 self::$concurrent = new ConcurrentManagedTaskExecutor(
                     $configuration->concurrentTasks,
-                    $container,
+                    $strategy instanceof ProvidesContainer ? $strategy->container() : null,
                     $configuration->maxIpcPayloadBytes,
-                );
-                self::$parallel = new ManagedChildWorkerPool(
-                    workerLimit: $configuration->childWorkers,
-                    bootstrap: $strategy instanceof ProvidesManagedTaskBootstrap
-                        ? $strategy->managedTaskBootstrap()
-                        : null,
-                    eventRouter: $strategy instanceof RoutesChildApplicationEvents
-                        ? $strategy
-                        : null,
-                    crashPolicy: $crashPolicy,
-                    maxPayloadBytes: $configuration->maxIpcPayloadBytes,
-                    cancellationGraceSeconds: $configuration->cancellationGraceSeconds,
                 );
             }
 
             $cancellation->throwIfRequested();
         } catch (Throwable $primary) {
             self::$concurrent = null;
-            self::$parallel = null;
-
             if ($bootAttempted) {
                 try {
                     $strategy->close();
@@ -125,6 +101,7 @@ final class WorkerRuntime
 
         self::$strategy = $strategy;
         self::$configuration = $configuration;
+        self::$protocol = $protocol;
     }
 
     /** @param WorkEnvelope<mixed> $work */
@@ -142,130 +119,113 @@ final class WorkerRuntime
             : 1;
         $diagnostics = [];
 
-        $cancellationId = $cancellation->subscribe(
-            static function (CancelledException $_failure): void {
-                self::$parallel?->forceClose();
-            },
-        );
+        for ($attempt = 1; $attempt <= $maxAttempts; ++$attempt) {
+            ProcessEvents::emitCore(new TaskStarted(ExecutorType::Primary, $attempt));
 
-        try {
-            for ($attempt = 1; $attempt <= $maxAttempts; ++$attempt) {
-                ProcessEvents::emitCore(new TaskStarted(ExecutorType::Primary, $attempt));
+            try {
+                $result = self::executeAttempt($strategy, $work, $context, $cancellation);
+                IpcPayloadGuard::assertWithin($result->value, $configuration->maxIpcPayloadBytes);
+                ProcessEvents::emitCore(new TaskSucceeded(ExecutorType::Primary, $attempt));
 
-                try {
-                    $result = self::executeAttempt($strategy, $work, $context, $cancellation);
-                    IpcPayloadGuard::assertWithin($result->value, $configuration->maxIpcPayloadBytes);
-                    ProcessEvents::emitCore(new TaskSucceeded(ExecutorType::Primary, $attempt));
+                return new PrimaryTaskResult(TaskOutcome::succeeded(
+                    $result->value,
+                    [...$diagnostics, ...$result->diagnostics],
+                ), false);
+            } catch (CancelledException $failure) {
+                self::emitFailure($failure, $attempt);
 
-                    return new PrimaryTaskResult(TaskOutcome::succeeded(
-                        $result->value,
-                        [...$diagnostics, ...$result->diagnostics],
-                    ), false);
-                } catch (CancelledException $failure) {
-                    self::emitFailure($failure, $attempt);
-
-                    return new PrimaryTaskResult(
-                        TaskOutcome::cancelled(self::diagnostic($failure, $context, $attempt), $diagnostics),
-                        true,
-                    );
-                } catch (Throwable $failure) {
-                    self::emitFailure($failure, $attempt);
-                    $evidence = self::failureEvidence($failure, $context, $attempt);
-                    if (!$strategy instanceof HandlesTaskFailure) {
-                        return new PrimaryTaskResult(
-                            TaskOutcome::failed(
-                                $evidence->terminal,
-                                [...$diagnostics, ...$evidence->history()],
-                            ),
-                            true,
-                        );
-                    }
-
-                    try {
-                        $action = $strategy->onFailure($work, $failure, $attempt, $cancellation);
-                    } catch (Throwable $policyFailure) {
-                        $policyEvidence = self::failureEvidence(
-                            $policyFailure,
-                            $context,
-                            $attempt,
-                        );
-
-                        return new PrimaryTaskResult(
-                            TaskOutcome::failed(
-                                $policyEvidence->terminal,
-                                [
-                                    ...$diagnostics,
-                                    ...$evidence->recoveredHistory(),
-                                    ...$policyEvidence->history(),
-                                ],
-                            ),
-                            true,
-                        );
-                    }
-                    if ($action instanceof CompleteAs) {
-                        $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
-                        IpcPayloadGuard::assertWithin($action->value, $configuration->maxIpcPayloadBytes);
-                        ProcessEvents::emitCore(new TaskSucceeded(ExecutorType::Primary, $attempt));
-
-                        return new PrimaryTaskResult(
-                            TaskOutcome::succeeded($action->value, $diagnostics),
-                            false,
-                        );
-                    }
-                    if ($action instanceof RetryCurrent && $attempt < $maxAttempts) {
-                        $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
-                        ProcessEvents::emitCore(new RetryScheduled(
-                            ExecutorType::Primary,
-                            $attempt + 1,
-                            $action->delaySeconds,
-                        ));
-                        if ($action->delaySeconds > 0) {
-                            delay($action->delaySeconds, cancellation: $cancellation);
-                        }
-
-                        continue;
-                    }
-
-                    $abort = $action instanceof AbortRun;
-                    if (!$abort && !$action instanceof FailCurrent && !$action instanceof RetryCurrent) {
-                        throw new LogicException(\sprintf(
-                            'Unsupported failure action %s.',
-                            $action::class,
-                        ));
-                    }
-
+                return new PrimaryTaskResult(
+                    TaskOutcome::cancelled(self::diagnostic($failure, $context, $attempt), $diagnostics),
+                    true,
+                );
+            } catch (Throwable $failure) {
+                self::emitFailure($failure, $attempt);
+                $evidence = self::failureEvidence($failure, $context, $attempt);
+                if (!$strategy instanceof HandlesTaskFailure) {
                     return new PrimaryTaskResult(
                         TaskOutcome::failed(
                             $evidence->terminal,
                             [...$diagnostics, ...$evidence->history()],
                         ),
-                        $abort,
+                        true,
                     );
                 }
-            }
 
-            throw new LogicException('Primary task attempt loop ended without an outcome.');
-        } finally {
-            $cancellation->unsubscribe($cancellationId);
+                try {
+                    $action = $strategy->onFailure($work, $failure, $attempt, $cancellation);
+                } catch (Throwable $policyFailure) {
+                    $policyEvidence = self::failureEvidence(
+                        $policyFailure,
+                        $context,
+                        $attempt,
+                    );
+
+                    return new PrimaryTaskResult(
+                        TaskOutcome::failed(
+                            $policyEvidence->terminal,
+                            [
+                                ...$diagnostics,
+                                ...$evidence->recoveredHistory(),
+                                ...$policyEvidence->history(),
+                            ],
+                        ),
+                        true,
+                    );
+                }
+                if ($action instanceof CompleteAs) {
+                    $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
+                    IpcPayloadGuard::assertWithin($action->value, $configuration->maxIpcPayloadBytes);
+                    ProcessEvents::emitCore(new TaskSucceeded(ExecutorType::Primary, $attempt));
+
+                    return new PrimaryTaskResult(
+                        TaskOutcome::succeeded($action->value, $diagnostics),
+                        false,
+                    );
+                }
+                if ($action instanceof RetryCurrent && $attempt < $maxAttempts) {
+                    $diagnostics = [...$diagnostics, ...$evidence->recoveredHistory()];
+                    ProcessEvents::emitCore(new RetryScheduled(
+                        ExecutorType::Primary,
+                        $attempt + 1,
+                        $action->delaySeconds,
+                    ));
+                    if ($action->delaySeconds > 0) {
+                        delay($action->delaySeconds, cancellation: $cancellation);
+                    }
+
+                    continue;
+                }
+
+                $abort = $action instanceof AbortRun;
+                if (!$abort && !$action instanceof FailCurrent && !$action instanceof RetryCurrent) {
+                    throw new LogicException(\sprintf(
+                        'Unsupported failure action %s.',
+                        $action::class,
+                    ));
+                }
+
+                return new PrimaryTaskResult(
+                    TaskOutcome::failed(
+                        $evidence->terminal,
+                        [...$diagnostics, ...$evidence->history()],
+                    ),
+                    $abort,
+                );
+            }
         }
+
+        throw new LogicException('Primary task attempt loop ended without an outcome.');
     }
 
     public static function finalize(): void
     {
         $strategy = self::$strategy;
-        $parallel = self::$parallel;
         self::$strategy = null;
         self::$configuration = null;
+        self::$protocol = null;
         self::$concurrent = null;
-        self::$parallel = null;
 
         $failures = [];
-        try {
-            $parallel?->close();
-        } catch (Throwable $failure) {
-            $failures[] = $failure;
-        }
-
         if ($strategy instanceof BootstrapsApplication) {
             try {
                 $strategy->close();
@@ -274,11 +234,8 @@ final class WorkerRuntime
             }
         }
 
-        if (\count($failures) === 1) {
-            throw $failures[0];
-        }
         if ($failures !== []) {
-            throw new WorkerCleanupFailed(null, $failures);
+            throw $failures[0];
         }
     }
 
@@ -296,10 +253,10 @@ final class WorkerRuntime
             return new AttemptResult($strategy->run($work, $cancellation), []);
         }
 
+        $protocol = self::$protocol
+            ?? throw new LogicException('Primary worker protocol is not initialized.');
         $concurrent = self::$concurrent
             ?? throw new LogicException('Concurrent task executor is not initialized.');
-        $parallel = self::$parallel
-            ?? throw new LogicException('Parallel task executor is not initialized.');
         $configuration = self::$configuration
             ?? throw new LogicException('Worker runtime configuration is not initialized.');
         $policy = $strategy instanceof ProvidesTaskExecutionPolicy
@@ -310,7 +267,7 @@ final class WorkerRuntime
             $cancellation,
             $policy,
             $concurrent,
-            $parallel,
+            $protocol,
             $configuration->maxIpcPayloadBytes,
         );
         $strategy->useManagedTasks($group);

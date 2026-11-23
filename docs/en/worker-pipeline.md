@@ -9,10 +9,12 @@ root process
   Orchestrator
     ├─ owns the finite WorkQueue and admission barriers
     ├─ creates a bounded primary pool
+    ├─ lazily creates bounded managed pools as direct children of root
     ├─ installs one Strategy copy in every primary
-    ├─ grants WorkEnvelope values while draining live events
+    ├─ grants WorkEnvelope values and routes managed requests/results
+    ├─ drains protocol, stdout, stderr, and live events
     ├─ aggregates results in admission order
-    └─ cancels, finalizes, and stops the pool
+    └─ cancels, finalizes, terminates, and reaps every direct child
 
 primary worker (depth 1)
   WorkerRuntime
@@ -21,16 +23,19 @@ primary worker (depth 1)
     ├─ creates one structured ManagedTaskGroup per WorkEnvelope
     ├─ runs Strategy::run()
     ├─ joins every managed task
-    └─ closes the child pool, then Strategy::close()
+    └─ closes Strategy resources on root's finalize request
 
-child worker (depth 2)
+managed worker (logical depth 2; direct OS child of root)
   ManagedTaskHandler
     └─ executes a small serializable ManagedTask message
 ```
 
 Root coordinates without knowing payload semantics. Primary performs useful
-strategy work. Child is optional isolation for strategy-owned subtasks. Managed
-depth deliberately stops at child; a child cannot create another child pool.
+strategy work and sends managed requests back to root over the same framed
+protocol. Root assigns them to reusable managed workers and returns events and
+outcomes to the requesting primary. Managed depth deliberately stops there;
+primary never forks or owns an OS child, so root can always terminate and reap
+the complete process graph directly.
 
 ## Why admission is separate from Strategy
 
@@ -97,15 +102,17 @@ object:
 - `RoutesChildApplicationEvents` selects child events that may reach root.
 
 `boot()` runs after the primary starts. `close()` must be idempotent and also
-runs after partial bootstrap failure. Shutdown closes the child pool before
-Strategy resources so child work cannot observe a closed connection or parser.
+runs after partial bootstrap failure. On normal shutdown root first observes
+that useful and managed work settled, then sends finalize to every direct
+worker and drains their terminal protocol/output before reaping them.
 
 ## Structured managed tasks
 
 Before `run()`, a Strategy implementing `UsesManagedTasks` receives a new group.
 `submit()` selects an executor through `TaskExecutionPolicy` and returns a
 `TaskHandle` immediately. Concurrent tasks use bounded Fiber slots in primary;
-parallel tasks use the reusable child pool.
+parallel tasks are routed through root to a lazily created reusable managed
+pool associated with that primary.
 
 The group belongs to one WorkEnvelope:
 
@@ -125,8 +132,9 @@ parentTaskId, process role, depth, and sourceId. `ProcessEvents::emit()` is
 available inside an active task scope and sends an `ApplicationEvent` to root.
 Runtime adds PID, a source-local monotonic sequence, and timestamp.
 
-Root drains the event channel while awaiting the result, preventing a full
-channel from stalling the worker. Core lifecycle and application events have
+Root drains framed fd 3/4 streams while awaiting results, preventing protocol
+backpressure from stalling a worker. stdout and stderr are separate bounded
+diagnostic tails and never carry control messages. Core lifecycle and application events have
 separate observers. Observer failures do not replace task failures and are
 retained by `observerFailures()`.
 
@@ -154,7 +162,8 @@ operator.
 External cancellation is combined with internal run shutdown. New admission
 stops, active primary and child tasks receive cancellation, and root keeps
 collecting available outcomes and diagnostics. Cooperative cleanup gets the
-configured `cancellationGrace`; a stuck managed worker is then stopped forcibly.
+configured `cancellationGrace`; root then sends TERM, waits `forceKillAfter`,
+sends KILL when necessary, and reaps every owned process.
 
 Root hooks never cross a process boundary. Strategy, payloads, managed tasks,
 events, and results must be serializable. Connections, streams, XMLReader

@@ -2,6 +2,22 @@
 
 [Русский](CHANGELOG.md)
 
+## 1.0.0 — Unreleased
+
+- Replaced the `amphp/parallel` backend with a root-owned direct process graph:
+  every primary and managed worker is launched, finalized, terminated, and
+  reaped by root over dedicated framed pipes.
+- Kept the public finite-work, managed-task, cancellation, event, result, and
+  recovery contracts while lowering the PHP baseline to 8.3.
+- Production async foundations are limited to `amphp/amp` and
+  `revolt/event-loop`; the package owns `proc_open`, protocol framing,
+  stdout/stderr draining, and TERM-to-KILL escalation.
+- Added clean-worker Composer autoload discovery and explicit overrides,
+  bounded worker output tails, lazy managed pools, and compatibility with an
+  already active Revolt loop.
+- Added a clean PHP 8.3 consumer fixture that verifies both primary and managed
+  execution and the exact five-package production dependency closure.
+
 ## 0.4.1 — 2026-11-19
 
 - Reorganized public documentation around reader tasks with definitions, an

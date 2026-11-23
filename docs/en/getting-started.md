@@ -12,7 +12,7 @@ which objects stay in root versus which Composer must load in a worker.
 | finite set | The queue knows its total task count; it does not wait for new messages after exhaustion |
 | root | The process that calls `Orchestrator::run()`; the queue and hooks live only here |
 | primary worker | A depth-one process with its own `Strategy` copy |
-| child worker | A depth-two process for a managed `ManagedTask`; the library creates no deeper process level |
+| child worker | A logical depth-two worker for a managed `ManagedTask`; root spawns it directly and the library creates no deeper level |
 | admission | The `WorkQueue::acquire()` decision: grant work, wait temporarily, or report exhaustion |
 | payload | The application object inside `WorkEnvelope`; it is a work recipe, not a bulk-data batch |
 | lease | The unique `TaskLease` connecting one grant to exactly one completion |
@@ -25,15 +25,23 @@ PHP class and method names remain exact API identifiers.
 
 ## First observable result
 
-The repository contains two `RebuildCustomer` messages, a strategy, and a
-runnable script. Install dependencies and run:
+Start in a clean application directory. These commands install the released
+package, add the application's PSR-4 namespace, and copy the minimal payload,
+strategy, and entry point from the installed package:
 
 ```bash
-composer install
-composer example:basic
+mkdir work-orchestrator-quick-start
+cd work-orchestrator-quick-start
+composer init --name=app/work-orchestrator-quick-start --license=proprietary --autoload=src/ --no-interaction
+composer require fedor/work-orchestrator:^1.0
+cp -R vendor/fedor/work-orchestrator/examples/consumer/src .
+cp -R vendor/fedor/work-orchestrator/examples/consumer/bin .
+composer dump-autoload
+php bin/rebuild-customers.php
 ```
 
-The inputs are fixed in [`examples/basic.php`](../../examples/basic.php):
+The inputs are fixed in
+[`bin/rebuild-customers.php`](../../examples/consumer/bin/rebuild-customers.php):
 customers `42` and `77`. Expected output:
 
 ```text
@@ -53,9 +61,24 @@ What happened:
    finished in another order.
 
 Useful work is in
-[`RebuildCustomerStrategy`](../../examples/Basic/RebuildCustomerStrategy.php),
-while composition is in the script. The strategy comment marks where an
-application would load its model and perform the action; core does not do that.
+[`App\WorkOrchestratorQuickStart\Work\RebuildCustomerStrategy`](../../examples/consumer/src/Work/RebuildCustomerStrategy.php),
+while composition is in the entry point. The fixture has
+[its own Composer/autoload contract](../../examples/consumer/composer.json) and
+does not depend on the library's `autoload-dev`. The strategy comment marks
+where an application would load its model and perform the action; core does not
+do that.
+
+When developing the library itself, the same result can be checked with a
+repository shortcut:
+
+```bash
+composer install
+composer example:basic
+```
+
+That shortcut uses repository classes under `examples/Basic`; an external
+consumer does not inherit dependency scripts or `autoload-dev`, so its primary
+path is the fixture above.
 
 ## Moving it into an application
 

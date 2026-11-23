@@ -49,6 +49,7 @@ final class WorkerRuntimeTest
             WorkerRuntime::initialize(
                 $strategy,
                 new WorkerRuntimeConfiguration(1, 1, 1_048_576),
+                null,
                 new NullCancellation(),
             );
         } catch (Throwable $exception) {

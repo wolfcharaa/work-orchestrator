@@ -98,9 +98,10 @@ $sum = $first->value($cancellation) + $second->value($cancellation);
 побочные эффекты, но runtime в любом случае join-ит все подзадачи после выхода
 из `run()`. После join новые submit запрещены.
 
-Если стратегия падает, группа отменяется и также join-ится. Сначала завершается
-child pool, затем вызывается `Strategy::close()`, поэтому child не увидит уже
-закрытый primary-local ресурс.
+Если стратегия падает, группа отменяется и также join-ится. Root не начинает
+финализацию процессов, пока managed work не settled. Process-local close hooks
+primary и managed workers независимы, поэтому consumer не должен рассчитывать
+на порядок между ними.
 
 ## Concurrent или Parallel
 
@@ -114,8 +115,10 @@ child pool, затем вызывается `Strategy::close()`, поэтому 
 
 Неизвестная task по умолчанию получает `Parallel`, то есть более сильную
 изоляцию. `concurrentTasksPerPrimary(n)` ограничивает Fiber slots внутри каждого
-primary; `childWorkersPerPrimary(n)` — child processes каждого primary. При `P`
-primary и `C` child верхняя граница — `1 + P + P*C` процессов.
+primary; `childWorkersPerPrimary(n)` — ленивый managed pool. Managed workers
+имеют логическую depth 2, но остаются прямыми OS-children root, который отвечает
+за их остановку и reap. При `P` primary и `C` child верхняя граница —
+`1 + P + P*C` процессов.
 
 ## Как создаётся handler
 
@@ -148,10 +151,13 @@ envelope дальше root observer; `Consume` оставляет решение
 | Метод `Orchestrator` | По умолчанию | Значение |
 | --- | ---: | --- |
 | `primaryWorkers(n)` | 1 | Одновременно активные primary processes |
-| `childWorkersPerPrimary(n)` | 1 | Reusable child processes на один primary |
+| `childWorkersPerPrimary(n)` | 1 | Ленивые reusable managed workers, связанные с primary |
 | `concurrentTasksPerPrimary(n)` | 1 | Fiber slots на один primary |
 | `maxIpcPayloadBytes(n)` | 1 MiB | Верхняя граница сериализованного task/event/result control message |
 | `cancellationGrace(seconds)` | 5.0 | Время совместного освобождения ресурсов до принудительной остановки |
+| `forceKillAfter(seconds)` | 2.0 | Время после TERM до KILL |
+| `workerOutputTailBytes(bytes)` | 16 KiB | Сохраняемый хвост stdout/stderr каждого worker |
+| `workerAutoloader(path)` | auto | Override Composer autoloader для чистых workers |
 
 Выбирайте лимиты по CPU, RAM, file descriptors и пропускной способности
 БД/диска. Глобального child budget между несколькими primary нет.

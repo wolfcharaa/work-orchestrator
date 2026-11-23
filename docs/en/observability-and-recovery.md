@@ -141,8 +141,11 @@ after restart, persist intent/checkpoint in the application and start a new run.
 The signal passed to `run($strategy, $cancellation)` combines with internal run
 shutdown. Strategies and handlers should call `throwIfRequested()` periodically
 or pass cancellation into async operations. Root waits no longer than
-`cancellationGrace()` (default 5 seconds) for cooperative cleanup, after which a
-stuck worker may be force-stopped.
+`cancellationGrace()` (default 5 seconds) for cooperative cleanup, then sends
+TERM. A worker still running after `forceKillAfter()` (default 2 seconds)
+receives KILL and is reaped. stdout and stderr remain separate from protocol
+traffic; at most `workerOutputTailBytes()` (default 16 KiB) of each stream is
+retained per worker.
 
 `close()` releases resources; it is not a place to begin substantial new work.
 Keep cleanup bounded and idempotent, and design transactions or compensation

@@ -20,10 +20,13 @@ Start with [Getting started](getting-started.md) for the basic path.
 | Method | Default | Meaning |
 | --- | ---: | --- |
 | `primaryWorkers()` | 1 | Simultaneously active primary processes |
-| `childWorkersPerPrimary()` | 1 | Child processes per primary for Parallel managed tasks |
+| `childWorkersPerPrimary()` | 1 | Lazy managed workers associated with each primary; every worker is a direct root child |
 | `concurrentTasksPerPrimary()` | 1 | Concurrent Fiber slots per primary |
 | `maxIpcPayloadBytes()` | 1 MiB | Serialized control-message limit |
 | `cancellationGrace()` | 5.0 s | Cooperative cleanup before force-stop |
+| `forceKillAfter()` | 2.0 s | Time after TERM before a still-running worker receives KILL |
+| `workerOutputTailBytes()` | 16 KiB | Per-worker bounded stdout and stderr evidence retained for diagnostics |
+| `workerAutoloader()` | auto | Explicit Composer autoloader path when automatic discovery is unsuitable |
 | `workerCrashPolicy()` | abort | Root policy for primary loss; retry separately requires declared idempotency |
 
 `beforeRun`, `onWorkerLifecycle`, `beforeTask`, `onTaskLifecycle`,

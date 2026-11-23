@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture_root="${project_root}/examples/consumer"
+consumer_root="$(mktemp -d /tmp/work-orchestrator-consumer.XXXXXX)"
+consumer_php="${WORK_ORCHESTRATOR_PHP:-php}"
+consumer_composer="${WORK_ORCHESTRATOR_COMPOSER:-$(command -v composer)}"
+
+cleanup() {
+    if [[ -d "${consumer_root}" ]]; then
+        rm -rf -- "${consumer_root}"
+    fi
+}
+trap cleanup EXIT
+
+cp -R "${fixture_root}/." "${consumer_root}/"
+
+if [[ -n "${WORK_ORCHESTRATOR_ARCHIVE:-}" ]]; then
+    repository="$(jq -c --arg archive "${WORK_ORCHESTRATOR_ARCHIVE}" '{
+        type: "package",
+        package: {
+            name: .name,
+            version: "1.0.0",
+            description: .description,
+            type: .type,
+            license: .license,
+            require: .require,
+            autoload: .autoload,
+            dist: {type: "zip", url: $archive}
+        }
+    }' "${project_root}/composer.json")"
+else
+    repository="$(printf '{"type":"path","url":"%s","options":{"symlink":false,"versions":{"fedor/work-orchestrator":"1.0.0"}}}' "${project_root}")"
+fi
+
+"${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.current "${repository}"
+if [[ -n "${WORK_ORCHESTRATOR_OFFLINE_ROOT:-}" ]]; then
+    offline_root="${WORK_ORCHESTRATOR_OFFLINE_ROOT}"
+    amp_repository="$(printf '{"type":"path","url":"%s","options":{"symlink":false,"versions":{"amphp/amp":"3.1.3"}}}' "${project_root}/vendor/amphp/amp")"
+    revolt_repository="$(printf '{"type":"path","url":"%s","options":{"symlink":false,"versions":{"revolt/event-loop":"1.0.9"}}}' "${project_root}/vendor/revolt/event-loop")"
+    container_repository="$(printf '{"type":"path","url":"%s","options":{"symlink":false,"versions":{"psr/container":"2.0.2"}}}' "${project_root}/vendor/psr/container")"
+    finder_repository="$(printf '{"type":"path","url":"%s","options":{"symlink":false,"versions":{"symfony/finder":"7.4.23"}}}' "${offline_root}/MessageBus/vendor/symfony/finder")"
+    "${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.amp "${amp_repository}"
+    "${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.revolt "${revolt_repository}"
+    "${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.container "${container_repository}"
+    "${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.finder "${finder_repository}"
+    "${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" config repositories.packagist false
+fi
+"${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" update --no-dev --no-interaction --no-progress --prefer-dist
+
+actual_packages="$("${consumer_php}" "${consumer_composer}" --working-dir="${consumer_root}" show --no-dev --name-only | LC_ALL=C sort)"
+expected_packages=$'amphp/amp\nfedor/work-orchestrator\npsr/container\nrevolt/event-loop\nsymfony/finder'
+if [[ "${actual_packages}" != "${expected_packages}" ]]; then
+    printf 'Unexpected production dependency closure:\n%s\n' "${actual_packages}" >&2
+    exit 1
+fi
+
+actual="$("${consumer_php}" "${consumer_root}/bin/rebuild-customers.php")"
+expected=$'customer:42 => 42\ncustomer:77 => 77\nrun => succeeded'
+
+if [[ "${actual}" != "${expected}" ]]; then
+    printf 'Unexpected consumer example output:\n%s\n' "${actual}" >&2
+    exit 1
+fi
+
+managed_actual="$("${consumer_php}" "${consumer_root}/bin/sum-squares.php")"
+managed_expected=$'sum => 30\nrun => succeeded'
+if [[ "${managed_actual}" != "${managed_expected}" ]]; then
+    printf 'Unexpected managed consumer example output:\n%s\n' "${managed_actual}" >&2
+    exit 1
+fi
+
+printf '%s\n' "${actual}"
+printf '%s\n' "${managed_actual}"
+printf 'Consumer example: ok\n'

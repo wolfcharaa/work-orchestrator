@@ -13,7 +13,7 @@
 | конечный набор | Очередь заранее знает общее число задач; ожидания новых сообщений после исчерпания нет |
 | root | Процесс, вызвавший `Orchestrator::run()`; только здесь живут очередь и hooks |
 | primary worker | Процесс первого уровня с собственной копией `Strategy` |
-| child worker | Процесс второго уровня для управляемой `ManagedTask`; глубже библиотека процессы не создаёт |
+| child worker | Логический depth-two worker для `ManagedTask`; root создаёт его OS-процесс напрямую, более глубокий уровень не создаётся |
 | admission (допуск) | Ответ `WorkQueue::acquire()`: задача выдана, временно заблокирована или очередь исчерпана |
 | payload (данные задачи) | Пользовательский объект внутри `WorkEnvelope`; это рецепт работы, а не большой массив данных |
 | lease (разрешение) | Уникальный `TaskLease`, связывающий выдачу задачи с её единственным завершением |
@@ -26,15 +26,23 @@
 
 ## Первый наблюдаемый результат
 
-В репозитории уже есть два сообщения `RebuildCustomer`, стратегия и запускаемый
-скрипт. Установите зависимости и выполните:
+Начните в чистом каталоге приложения. Команды устанавливают опубликованный
+пакет, добавляют PSR-4 namespace приложения и копируют минимальные payload,
+стратегию и entrypoint из установленного пакета:
 
 ```bash
-composer install
-composer example:basic
+mkdir work-orchestrator-quick-start
+cd work-orchestrator-quick-start
+composer init --name=app/work-orchestrator-quick-start --license=proprietary --autoload=src/ --no-interaction
+composer require fedor/work-orchestrator:^1.0
+cp -R vendor/fedor/work-orchestrator/examples/consumer/src .
+cp -R vendor/fedor/work-orchestrator/examples/consumer/bin .
+composer dump-autoload
+php bin/rebuild-customers.php
 ```
 
-Входные данные зафиксированы в [`examples/basic.php`](../../examples/basic.php):
+Входные данные зафиксированы в
+[`bin/rebuild-customers.php`](../../examples/consumer/bin/rebuild-customers.php):
 customer `42` и `77`. Ожидаемый вывод:
 
 ```text
@@ -54,10 +62,24 @@ run => succeeded
    завершили работу в другом порядке.
 
 Полезная логика находится в
-[`RebuildCustomerStrategy`](../../examples/Basic/RebuildCustomerStrategy.php),
-а composition — в скрипте. Комментарий внутри стратегии обозначает место, где
-приложение обычно загружает модель и выполняет действие; библиотека этого не
-делает.
+[`App\WorkOrchestratorQuickStart\Work\RebuildCustomerStrategy`](../../examples/consumer/src/Work/RebuildCustomerStrategy.php),
+а composition — в entrypoint. У fixture есть
+[собственный Composer/autoload contract](../../examples/consumer/composer.json);
+он не зависит от `autoload-dev` библиотеки. Комментарий внутри стратегии
+обозначает место, где приложение обычно загружает модель и выполняет действие;
+библиотека этого не делает.
+
+При разработке самой библиотеки тот же результат можно проверить shortcut-ом
+из её checkout:
+
+```bash
+composer install
+composer example:basic
+```
+
+Этот shortcut использует repository classes из `examples/Basic`; внешний
+consumer не получает dependency scripts и `autoload-dev`, поэтому его основной
+путь — fixture выше.
 
 ## Перенос в приложение
 

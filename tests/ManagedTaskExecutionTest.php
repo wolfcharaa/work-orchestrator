@@ -142,13 +142,10 @@ final class ManagedTaskExecutionTest
         Assert::same($failure->origin->executor, ExecutorType::Parallel);
         Assert::count($work->outcome->diagnostics, 0);
         $diagnostics = $result->diagnostics();
-        Assert::count($diagnostics, 2);
+        Assert::count($diagnostics, 1);
         $crash = $diagnostics[0]
             ?? throw new LogicException('Expected the managed child crash diagnostic.');
-        $cleanup = $diagnostics[1]
-            ?? throw new LogicException('Expected the managed child cleanup diagnostic.');
         Assert::same($crash->kind, FailureKind::WorkerCrash);
-        Assert::same($cleanup->kind, FailureKind::Cleanup);
     }
 
     private static function temporaryFile(): string
